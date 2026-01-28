@@ -107,11 +107,29 @@ def _spec_label(spec) -> str:
 
 st.set_page_config(page_title="IR/DR Scheduler Config", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    div[data-testid="stDownloadButton"] { display: flex; justify-content: flex-end; }
+    div[data-testid="stDownloadButton"] button,
+    div[data-testid="stFileUploader"] button {
+        height: 2.5rem;
+        padding: 0 1.1rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("IR/DR Scheduler Configurator")
 
 _ensure_cfg_state()
 
-uploaded = st.file_uploader("Load YAML", type=["yml", "yaml"])
+top_cols = st.columns([3, 1])
+with top_cols[0]:
+    uploaded = st.file_uploader("Load YAML", type=["yml", "yaml"])
+download_slot = top_cols[1].empty()
+notice_slot = st.empty()
 if uploaded:
     try:
         loaded = yaml.safe_load(uploaded) or {}
@@ -162,14 +180,18 @@ with tabs[1]:
     st.subheader("Constraint modes")
     modes = cfg["gui"]["constraints"].get("modes", {})
     for spec in CONSTRAINT_SPECS:
+        if spec.softenable:
+            options = ["always", "if_able", "disabled"]
+        else:
+            options = ["always", "disabled"]
         default_mode = modes.get(spec.id, "if_able" if spec.softenable else "always")
-        if default_mode not in {"always", "if_able", "disabled"}:
+        if default_mode not in options:
             default_mode = "if_able" if spec.softenable else "always"
         selection = st.radio(
             _spec_label(spec),
-            options=["always", "if_able", "disabled"],
+            options=options,
             horizontal=True,
-            index=["always", "if_able", "disabled"].index(default_mode),
+            index=options.index(default_mode),
             key=f"mode_{spec.id}",
         )
         modes[spec.id] = selection
@@ -209,17 +231,17 @@ with tabs[2]:
 st.divider()
 
 yaml_text = yaml.safe_dump(cfg, sort_keys=False)
-
-st.subheader("Current YAML")
-st.code(yaml_text, language="yaml")
-saved = st.download_button(
+saved = download_slot.download_button(
     "Download YAML",
     data=yaml_text,
     file_name="ir-scheduler.yml",
     mime="text/yaml",
 )
 if saved:
-    st.info(
+    notice_slot.info(
         f"Move the downloaded file 'ir-scheduler.yml' into:\n{os.getcwd()}",
         icon="📌",
     )
+
+st.subheader("Current YAML")
+st.code(yaml_text, language="yaml")

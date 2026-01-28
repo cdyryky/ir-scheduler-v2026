@@ -24,9 +24,9 @@ gui:
       - Brock
       - Katz
     DR_counts:
-      DR1: 8
-      DR2: 7
-      DR3: 8
+      DR1: 20
+      DR2: 20
+      DR3: 20
   constraints:
     modes:
       one_place: always
@@ -52,10 +52,11 @@ gui:
       ir3_late_block: always
       first_timer: if_able
       consec_full_mh: if_able
-      adjacent_full_mh: disabled
+      no_sequential_year1_3: if_able
     soft_priority:
     - first_timer
     - consec_full_mh
+    - no_sequential_year1_3
 residents:
 - id: Gaburak
   track: IR1
@@ -93,6 +94,30 @@ residents:
   track: DR1
 - id: DR1-8
   track: DR1
+- id: DR1-9
+  track: DR1
+- id: DR1-10
+  track: DR1
+- id: DR1-11
+  track: DR1
+- id: DR1-12
+  track: DR1
+- id: DR1-13
+  track: DR1
+- id: DR1-14
+  track: DR1
+- id: DR1-15
+  track: DR1
+- id: DR1-16
+  track: DR1
+- id: DR1-17
+  track: DR1
+- id: DR1-18
+  track: DR1
+- id: DR1-19
+  track: DR1
+- id: DR1-20
+  track: DR1
 - id: DR2-1
   track: DR2
 - id: DR2-2
@@ -106,6 +131,32 @@ residents:
 - id: DR2-6
   track: DR2
 - id: DR2-7
+  track: DR2
+- id: DR2-8
+  track: DR2
+- id: DR2-9
+  track: DR2
+- id: DR2-10
+  track: DR2
+- id: DR2-11
+  track: DR2
+- id: DR2-12
+  track: DR2
+- id: DR2-13
+  track: DR2
+- id: DR2-14
+  track: DR2
+- id: DR2-15
+  track: DR2
+- id: DR2-16
+  track: DR2
+- id: DR2-17
+  track: DR2
+- id: DR2-18
+  track: DR2
+- id: DR2-19
+  track: DR2
+- id: DR2-20
   track: DR2
 - id: DR3-1
   track: DR3
@@ -122,4 +173,28 @@ residents:
 - id: DR3-7
   track: DR3
 - id: DR3-8
+  track: DR3
+- id: DR3-9
+  track: DR3
+- id: DR3-10
+  track: DR3
+- id: DR3-11
+  track: DR3
+- id: DR3-12
+  track: DR3
+- id: DR3-13
+  track: DR3
+- id: DR3-14
+  track: DR3
+- id: DR3-15
+  track: DR3
+- id: DR3-16
+  track: DR3
+- id: DR3-17
+  track: DR3
+- id: DR3-18
+  track: DR3
+- id: DR3-19
+  track: DR3
+- id: DR3-20
   track: DR3

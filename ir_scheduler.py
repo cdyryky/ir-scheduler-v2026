@@ -6,7 +6,7 @@ import os
 import sys
 from io import StringIO
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import yaml
 from ortools.sat.python import cp_model
@@ -42,6 +42,7 @@ class Solution:
 class Diagnostic:
     status: str
     conflicting_constraints: List[Dict[str, str]]
+    suggestions: List[Dict[str, str]]
 
 
 @dataclass
@@ -253,6 +254,14 @@ def _resident_groups(residents: List[Resident]) -> Dict[str, List[str]]:
         groups[resident.track].append(resident.resident_id)
     groups["IR4_PLUS"] = groups["IR4"] + groups["IR5"]
     groups["FIRST_TIMER_CANDIDATES"] = groups["DR1"] + groups["IR1"]
+    groups["YEAR1_3"] = (
+        groups["DR1"]
+        + groups["DR2"]
+        + groups["DR3"]
+        + groups["IR1"]
+        + groups["IR2"]
+        + groups["IR3"]
+    )
     return groups
 
 
@@ -321,6 +330,7 @@ class ConstraintSpec:
     id: str
     label: str
     softenable: bool
+    impact: int
     add_hard: Callable[[ConstraintContext, Optional[cp_model.BoolVar]], None]
     add_soft: Optional[Callable[[ConstraintContext], List[cp_model.IntVar]]] = None
     weight_key: Optional[str] = None
@@ -552,28 +562,32 @@ def _add_consec_full_mh_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
     return excess_vars
 
 
-def _add_adjacent_full_mh_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    full_mh = ctx.full_mh()
-    for resident in ctx.schedule_input.residents:
+def _add_no_sequential_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    for resident_id in ctx.groups["YEAR1_3"]:
         for b in range(ctx.num_blocks - 1):
-            _enforce(
-                ctx.model.Add(full_mh[(resident.resident_id, b)] + full_mh[(resident.resident_id, b + 1)] <= 1),
-                assumption,
-            )
+            sum_b = sum(ctx.p[(resident_id, b, rot)] for rot in ROTATIONS)
+            sum_next = sum(ctx.p[(resident_id, b + 1, rot)] for rot in ROTATIONS)
+            _enforce(ctx.model.Add(sum_b + sum_next <= 1), assumption)
 
 
-def _add_adjacent_full_mh_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
-    full_mh = ctx.full_mh()
-    adj: List[cp_model.IntVar] = []
-    for resident in ctx.schedule_input.residents:
+def _add_no_sequential_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
+    penalties: List[cp_model.IntVar] = []
+    for resident_id in ctx.groups["YEAR1_3"]:
         for b in range(ctx.num_blocks - 1):
-            z = ctx.model.NewBoolVar(f"adj_full_mh_{resident.resident_id}_{b}")
-            ctx.model.AddBoolAnd([full_mh[(resident.resident_id, b)], full_mh[(resident.resident_id, b + 1)]]).OnlyEnforceIf(z)
-            ctx.model.AddBoolOr(
-                [full_mh[(resident.resident_id, b)].Not(), full_mh[(resident.resident_id, b + 1)].Not()]
-            ).OnlyEnforceIf(z.Not())
-            adj.append(z)
-    return adj
+            any_b = ctx.model.NewBoolVar(f"any_assign_{resident_id}_{b}")
+            any_next = ctx.model.NewBoolVar(f"any_assign_{resident_id}_{b+1}")
+            sum_b = sum(ctx.p[(resident_id, b, rot)] for rot in ROTATIONS)
+            sum_next = sum(ctx.p[(resident_id, b + 1, rot)] for rot in ROTATIONS)
+            ctx.model.Add(sum_b >= 1).OnlyEnforceIf(any_b)
+            ctx.model.Add(sum_b == 0).OnlyEnforceIf(any_b.Not())
+            ctx.model.Add(sum_next >= 1).OnlyEnforceIf(any_next)
+            ctx.model.Add(sum_next == 0).OnlyEnforceIf(any_next.Not())
+
+            z = ctx.model.NewBoolVar(f"adj_any_{resident_id}_{b}")
+            ctx.model.AddBoolAnd([any_b, any_next]).OnlyEnforceIf(z)
+            ctx.model.AddBoolOr([any_b.Not(), any_next.Not()]).OnlyEnforceIf(z.Not())
+            penalties.append(z)
+    return penalties
 
 
 CONSTRAINT_SPECS: List[ConstraintSpec] = [
@@ -581,132 +595,154 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         id="one_place",
         label="One place at a time (<=1.0 FTE per block)",
         softenable=False,
+        impact=70,
         add_hard=_add_one_place_at_time,
     ),
     ConstraintSpec(
         id="blocked",
         label="Blocked assignments",
         softenable=False,
+        impact=20,
         add_hard=_add_blocked,
     ),
     ConstraintSpec(
         id="no_half_non_ir5",
         label="No half assignments outside IR5 split",
         softenable=False,
+        impact=30,
         add_hard=_add_no_half_assignments,
     ),
     ConstraintSpec(
         id="ir5_split_coupling",
         label="IR5 MH-IR/48X-IR split coupling",
         softenable=False,
+        impact=40,
         add_hard=_add_ir5_split_coupling,
     ),
     ConstraintSpec(
         id="coverage_48x_ir",
         label="48X-IR coverage == 1.0 FTE",
         softenable=False,
+        impact=100,
         add_hard=_add_coverage_48x_ir,
     ),
     ConstraintSpec(
         id="coverage_48x_ctus",
         label="48X-CT/US coverage == 1.0 FTE",
         softenable=False,
+        impact=100,
         add_hard=_add_coverage_48x_ctus,
     ),
     ConstraintSpec(
         id="mh_total_minmax",
         label="MH total coverage between 3.0 and 4.0 FTE",
         softenable=False,
+        impact=90,
         add_hard=_add_mh_total_minmax,
     ),
     ConstraintSpec(
         id="mh_ctus_cap",
         label="MH-CT/US cap <= 1.0 FTE",
         softenable=False,
+        impact=50,
         add_hard=_add_mh_ctus_cap,
     ),
     ConstraintSpec(
         id="kir_cap",
         label="KIR cap <= 2.0 FTE",
         softenable=False,
+        impact=50,
         add_hard=_add_kir_cap,
     ),
     ConstraintSpec(
         id="dr1_totals",
         label="DR1 totals (MH-IR only)",
         softenable=False,
+        impact=80,
         add_hard=_add_dr1_totals,
     ),
     ConstraintSpec(
         id="dr2_totals",
         label="DR2 totals (MH-CT/US only)",
         softenable=False,
+        impact=80,
         add_hard=_add_dr2_totals,
     ),
     ConstraintSpec(
         id="dr3_totals",
         label="DR3 totals (48X-CT/US only)",
         softenable=False,
+        impact=80,
         add_hard=_add_dr3_totals,
     ),
     ConstraintSpec(
         id="ir1_totals",
         label="IR1 totals",
         softenable=False,
+        impact=80,
         add_hard=_add_ir1_totals,
     ),
     ConstraintSpec(
         id="ir2_totals",
         label="IR2 totals",
         softenable=False,
+        impact=80,
         add_hard=_add_ir2_totals,
     ),
     ConstraintSpec(
         id="ir3_totals",
         label="IR3 totals",
         softenable=False,
+        impact=80,
         add_hard=_add_ir3_totals,
     ),
     ConstraintSpec(
         id="ir4_totals",
         label="IR4 totals",
         softenable=False,
+        impact=80,
         add_hard=_add_ir4_totals,
     ),
     ConstraintSpec(
         id="ir5_totals",
         label="IR5 totals",
         softenable=False,
+        impact=90,
         add_hard=_add_ir5_totals,
     ),
     ConstraintSpec(
         id="ir5_mh_min_per_block",
         label="IR5 MH-IR min 1.0 FTE per block",
         softenable=False,
+        impact=70,
         add_hard=_add_ir5_mh_min_per_block,
     ),
     ConstraintSpec(
         id="ir4_plus_mh_cap",
         label="IR4+ MH-IR max 2.0 FTE per block",
         softenable=False,
+        impact=60,
         add_hard=_add_ir4_plus_mh_cap,
     ),
     ConstraintSpec(
         id="dr1_early_block",
         label="DR1 no MH-IR in first four blocks",
         softenable=False,
+        impact=15,
         add_hard=_add_dr1_early_block_mh_prohibited,
     ),
     ConstraintSpec(
         id="ir3_late_block",
         label="IR3 no MH-IR or 48X-IR in blocks 8-13",
         softenable=False,
+        impact=15,
         add_hard=_add_ir3_late_block_restrictions,
     ),
     ConstraintSpec(
         id="first_timer",
         label="Limit first-timer MH-IR to 1 per block",
         softenable=True,
+        impact=25,
         add_hard=_add_first_timer_hard,
         add_soft=_add_first_timer_soft,
         weight_key="first_timer",
@@ -716,17 +752,19 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         id="consec_full_mh",
         label="Avoid 3 full MH-IR blocks in any 3-block window",
         softenable=True,
+        impact=25,
         add_hard=_add_consec_full_mh_hard,
         add_soft=_add_consec_full_mh_soft,
         weight_key="consec",
         objective_key="consec_excess",
     ),
     ConstraintSpec(
-        id="adjacent_full_mh",
-        label="Avoid adjacent full MH-IR blocks",
+        id="no_sequential_year1_3",
+        label="No back-to-back blocks for year 1-3 residents",
         softenable=True,
-        add_hard=_add_adjacent_full_mh_hard,
-        add_soft=_add_adjacent_full_mh_soft,
+        impact=35,
+        add_hard=_add_no_sequential_hard,
+        add_soft=_add_no_sequential_soft,
         weight_key="adj",
         objective_key="adj",
     ),
@@ -749,7 +787,11 @@ def _apply_constraints(
     schedule_input: ScheduleInput,
     u: Dict[Tuple[str, int, str], cp_model.IntVar],
     p: Dict[Tuple[str, int, str], cp_model.IntVar],
-) -> Tuple[Dict[str, List[cp_model.IntVar]], Dict[int, ConstraintSpec]]:
+) -> Tuple[
+    Dict[str, List[cp_model.IntVar]],
+    Dict[int, ConstraintSpec],
+    Dict[int, cp_model.BoolVar],
+]:
     groups = _resident_groups(schedule_input.residents)
     ctx = ConstraintContext(
         model=model,
@@ -762,6 +804,7 @@ def _apply_constraints(
 
     penalties: Dict[str, List[cp_model.IntVar]] = {spec.id: [] for spec in CONSTRAINT_SPECS}
     assumption_index_map: Dict[int, ConstraintSpec] = {}
+    assumption_var_map: Dict[int, cp_model.BoolVar] = {}
 
     for spec in CONSTRAINT_SPECS:
         mode = _constraint_mode(spec, schedule_input.constraint_modes)
@@ -774,9 +817,10 @@ def _apply_constraints(
         assumption = model.NewBoolVar(f"a_{spec.id}")
         model.AddAssumption(assumption)
         assumption_index_map[assumption.Index()] = spec
+        assumption_var_map[assumption.Index()] = assumption
         spec.add_hard(ctx, assumption)
 
-    return penalties, assumption_index_map
+    return penalties, assumption_index_map, assumption_var_map
 
 
 def _linear_terms_expr(terms: Iterable[Tuple[cp_model.IntVar, int]]):
@@ -825,22 +869,129 @@ def _build_weighted_terms(
     return terms
 
 
-def _diagnostic_from_solver(
-    solver: cp_model.CpSolver, assumption_index_map: Dict[int, ConstraintSpec]
-) -> Diagnostic:
-    core = solver.SufficientAssumptionsForInfeasibility()
-    seen: set = set()
-    conflicts: List[Dict[str, str]] = []
+def _core_indices(core: Sequence) -> List[int]:
+    indices: List[int] = []
     for lit in core:
         if hasattr(lit, "Index"):
             idx = lit.Index()
         else:
             idx = abs(int(lit))
+        indices.append(idx)
+    return indices
+
+
+def _shrink_core(
+    solver: cp_model.CpSolver, model: cp_model.CpModel, assumptions: List[cp_model.BoolVar]
+) -> List[cp_model.BoolVar]:
+    if not hasattr(solver, "SolveWithAssumptions"):
+        return assumptions
+    core = list(assumptions)
+    idx = 0
+    while idx < len(core):
+        trial = core[:idx] + core[idx + 1 :]
+        status = solver.SolveWithAssumptions(model, trial)
+        if status == cp_model.INFEASIBLE:
+            core = trial
+        else:
+            idx += 1
+    return core
+
+
+def _with_constraint_modes(schedule_input: ScheduleInput, overrides: Dict[str, str]) -> ScheduleInput:
+    modes = dict(schedule_input.constraint_modes)
+    modes.update(overrides)
+    return ScheduleInput(
+        block_labels=schedule_input.block_labels,
+        residents=schedule_input.residents,
+        blocked=schedule_input.blocked,
+        weights=schedule_input.weights,
+        num_solutions=schedule_input.num_solutions,
+        constraint_modes=modes,
+        soft_priority=schedule_input.soft_priority,
+    )
+
+
+def _is_feasible(schedule_input: ScheduleInput) -> bool:
+    model = cp_model.CpModel()
+    u, p = _build_variables(model, schedule_input.residents, schedule_input.block_labels)
+    _apply_constraints(model, schedule_input, u, p)
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
+    return status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+
+def _suggest_relaxations_fast(
+    schedule_input: ScheduleInput,
+    specs: List[ConstraintSpec],
+    max_suggestions: int = 3,
+    verify_top_n: int = 1,
+    progress_cb: Optional[Callable[[int, int, ConstraintSpec, str], None]] = None,
+) -> List[Dict[str, str]]:
+    candidates: List[Tuple[ConstraintSpec, str]] = []
+    for spec in specs:
+        current_mode = _constraint_mode(spec, schedule_input.constraint_modes)
+        mode = "if_able" if spec.softenable else "disabled"
+        if mode != current_mode:
+            candidates.append((spec, mode))
+
+    candidates.sort(key=lambda item: item[0].impact, reverse=True)
+    suggestions: List[Dict[str, str]] = []
+    total = min(len(candidates), max_suggestions)
+    total_verify = min(verify_top_n, total)
+    for idx, (spec, mode) in enumerate(candidates[:max_suggestions], start=1):
+        verified = False
+        if idx <= verify_top_n:
+            if progress_cb:
+                progress_cb(idx, total_verify, spec, mode)
+            candidate_input = _with_constraint_modes(schedule_input, {spec.id: mode})
+            verified = _is_feasible(candidate_input)
+        suggestions.append(
+            {
+                "id": spec.id,
+                "label": spec.label,
+                "mode": mode,
+                "verified": verified,
+            }
+        )
+    return suggestions
+
+
+def _build_diagnostic(
+    schedule_input: ScheduleInput,
+    model: cp_model.CpModel,
+    solver: cp_model.CpSolver,
+    assumption_index_map: Dict[int, ConstraintSpec],
+    assumption_var_map: Dict[int, cp_model.BoolVar],
+    shrink_core: bool = False,
+    suggest_relaxations: bool = False,
+    progress_cb: Optional[Callable[[int, int, ConstraintSpec, str], None]] = None,
+) -> Diagnostic:
+    core = solver.SufficientAssumptionsForInfeasibility()
+    core_indices = _core_indices(core)
+    if shrink_core and assumption_var_map:
+        core_vars = [assumption_var_map[idx] for idx in core_indices if idx in assumption_var_map]
+        shrunk = _shrink_core(solver, model, core_vars)
+        core_indices = [var.Index() for var in shrunk]
+
+    seen: set = set()
+    specs: List[ConstraintSpec] = []
+    conflicts: List[Dict[str, str]] = []
+    for idx in core_indices:
         spec = assumption_index_map.get(idx)
         if spec and spec.id not in seen:
+            specs.append(spec)
             conflicts.append({"id": spec.id, "label": spec.label})
             seen.add(spec.id)
-    return Diagnostic(status="INFEASIBLE", conflicting_constraints=conflicts)
+    suggestions = (
+        _suggest_relaxations_fast(schedule_input, specs, progress_cb=progress_cb)
+        if suggest_relaxations
+        else []
+    )
+    return Diagnostic(
+        status="INFEASIBLE",
+        conflicting_constraints=conflicts,
+        suggestions=suggestions,
+    )
 
 
 def _extract_solution(
@@ -870,10 +1021,15 @@ def _extract_solution(
     return Solution(assignments=assignments, objective=objective)
 
 
-def solve_schedule(schedule_input: ScheduleInput) -> SolveResult:
+def solve_schedule(
+    schedule_input: ScheduleInput,
+    suggest_relaxations: bool = False,
+    shrink_core: bool = False,
+    progress_cb: Optional[Callable[[int, int, ConstraintSpec, str], None]] = None,
+) -> SolveResult:
     model = cp_model.CpModel()
     u, p = _build_variables(model, schedule_input.residents, schedule_input.block_labels)
-    penalties, assumption_index_map = _apply_constraints(model, schedule_input, u, p)
+    penalties, assumption_index_map, assumption_var_map = _apply_constraints(model, schedule_input, u, p)
 
     solver = cp_model.CpSolver()
 
@@ -887,7 +1043,19 @@ def solve_schedule(schedule_input: ScheduleInput) -> SolveResult:
         model.AddAbsEquality(diff, t0 - t1)
         status, _ = _optimize_and_fix(model, solver, [(diff, 1)])
         if status == cp_model.INFEASIBLE:
-            return SolveResult([], _diagnostic_from_solver(solver, assumption_index_map))
+            return SolveResult(
+                [],
+                _build_diagnostic(
+                    schedule_input,
+                    model,
+                    solver,
+                    assumption_index_map,
+                    assumption_var_map,
+                    shrink_core=shrink_core,
+                    suggest_relaxations=suggest_relaxations,
+                    progress_cb=progress_cb,
+                ),
+            )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return SolveResult([], None)
 
@@ -902,7 +1070,19 @@ def solve_schedule(schedule_input: ScheduleInput) -> SolveResult:
                 continue
             status, _ = _optimize_and_fix(model, solver, [(var, 1) for var in penalty_vars])
             if status == cp_model.INFEASIBLE:
-                return SolveResult([], _diagnostic_from_solver(solver, assumption_index_map))
+                return SolveResult(
+                    [],
+                    _build_diagnostic(
+                        schedule_input,
+                        model,
+                        solver,
+                        assumption_index_map,
+                        assumption_var_map,
+                        shrink_core=shrink_core,
+                        suggest_relaxations=suggest_relaxations,
+                        progress_cb=progress_cb,
+                    ),
+                )
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 return SolveResult([], None)
         final_terms = _build_weighted_terms(penalties, schedule_input.weights, ignore_ids=set(soft_priority))
@@ -931,7 +1111,19 @@ def solve_schedule(schedule_input: ScheduleInput) -> SolveResult:
         model.AddBoolOr([lit.Not() for lit in lits])
 
     if not solutions and last_status == cp_model.INFEASIBLE:
-        return SolveResult([], _diagnostic_from_solver(solver, assumption_index_map))
+        return SolveResult(
+            [],
+            _build_diagnostic(
+                schedule_input,
+                model,
+                solver,
+                assumption_index_map,
+                assumption_var_map,
+                shrink_core=shrink_core,
+                suggest_relaxations=suggest_relaxations,
+                progress_cb=progress_cb,
+            ),
+        )
 
     return SolveResult(solutions, None)
 
@@ -947,6 +1139,7 @@ def _solutions_to_yaml(result: SolveResult) -> str:
         payload["diagnostic"] = {
             "status": result.diagnostic.status,
             "conflicting_constraints": result.diagnostic.conflicting_constraints,
+            "suggestions": result.diagnostic.suggestions,
         }
     return yaml.safe_dump(payload, sort_keys=False)
 
@@ -991,6 +1184,33 @@ def main() -> None:
 
     schedule_input = load_schedule_input(args.input)
     result = solve_schedule(schedule_input)
+    if result.diagnostic and sys.stdin.isatty():
+        response = input(
+            "Model infeasible. Run fast diagnostic suggestions? [y/N]: "
+        ).strip().lower()
+        if response.startswith("y"):
+            progress_state = {"printed": False}
+
+            def _progress(current: int, total: int, spec: ConstraintSpec, mode: str) -> None:
+                if not sys.stdout.isatty():
+                    return
+                progress_state["printed"] = True
+                label = f"{spec.id}->{mode}"
+                print(
+                    f"Diagnostic suggestions: {current}/{total} {label}",
+                    end="\r",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            result = solve_schedule(
+                schedule_input,
+                suggest_relaxations=True,
+                shrink_core=False,
+                progress_cb=_progress,
+            )
+            if progress_state["printed"]:
+                print("", file=sys.stderr)
     output = _solutions_to_yaml(result)
 
     if args.output:
