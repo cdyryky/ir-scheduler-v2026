@@ -1,0 +1,125 @@
+blocks: 13
+blocked: []
+weights:
+  consec: 100
+  first_timer: 30
+  adj: 1
+num_solutions: 1
+gui:
+  residents:
+    IR:
+      IR1:
+      - Gaburak
+      - Miller
+      IR2:
+      - Qi
+      - Verst
+      IR3:
+      - Madsen
+      - Mahmoud
+      IR4:
+      - Javan
+      - Virk
+      IR5:
+      - Brock
+      - Katz
+    DR_counts:
+      DR1: 8
+      DR2: 7
+      DR3: 8
+  constraints:
+    modes:
+      one_place: always
+      blocked: always
+      no_half_non_ir5: always
+      ir5_split_coupling: always
+      coverage_48x_ir: always
+      coverage_48x_ctus: always
+      mh_total_minmax: always
+      mh_ctus_cap: always
+      kir_cap: always
+      dr1_totals: always
+      dr2_totals: always
+      dr3_totals: always
+      ir1_totals: always
+      ir2_totals: always
+      ir3_totals: always
+      ir4_totals: always
+      ir5_totals: always
+      ir5_mh_min_per_block: always
+      ir4_plus_mh_cap: always
+      dr1_early_block: always
+      ir3_late_block: always
+      first_timer: if_able
+      consec_full_mh: if_able
+      adjacent_full_mh: disabled
+    soft_priority:
+    - first_timer
+    - consec_full_mh
+residents:
+- id: Gaburak
+  track: IR1
+- id: Miller
+  track: IR1
+- id: Qi
+  track: IR2
+- id: Verst
+  track: IR2
+- id: Madsen
+  track: IR3
+- id: Mahmoud
+  track: IR3
+- id: Javan
+  track: IR4
+- id: Virk
+  track: IR4
+- id: Brock
+  track: IR5
+- id: Katz
+  track: IR5
+- id: DR1-1
+  track: DR1
+- id: DR1-2
+  track: DR1
+- id: DR1-3
+  track: DR1
+- id: DR1-4
+  track: DR1
+- id: DR1-5
+  track: DR1
+- id: DR1-6
+  track: DR1
+- id: DR1-7
+  track: DR1
+- id: DR1-8
+  track: DR1
+- id: DR2-1
+  track: DR2
+- id: DR2-2
+  track: DR2
+- id: DR2-3
+  track: DR2
+- id: DR2-4
+  track: DR2
+- id: DR2-5
+  track: DR2
+- id: DR2-6
+  track: DR2
+- id: DR2-7
+  track: DR2
+- id: DR3-1
+  track: DR3
+- id: DR3-2
+  track: DR3
+- id: DR3-3
+  track: DR3
+- id: DR3-4
+  track: DR3
+- id: DR3-5
+  track: DR3
+- id: DR3-6
+  track: DR3
+- id: DR3-7
+  track: DR3
+- id: DR3-8
+  track: DR3
