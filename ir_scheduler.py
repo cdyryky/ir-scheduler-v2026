@@ -30,6 +30,7 @@ class ScheduleInput:
     num_solutions: int
     constraint_modes: Dict[str, str]
     soft_priority: List[str]
+    requirements: Dict[str, Dict[str, int]]
 
 
 @dataclass
@@ -200,15 +201,52 @@ def _parse_gui_constraints(data: dict) -> Tuple[Dict[str, str], List[str]]:
     return normalized_modes, [str(item) for item in soft_priority]
 
 
+def _parse_requirements(data: dict, num_blocks: int) -> Dict[str, Dict[str, int]]:
+    raw = data.get("requirements")
+    if not isinstance(raw, dict):
+        raise ScheduleError("Input must include 'requirements' as a mapping.")
+    requirements: Dict[str, Dict[str, int]] = {}
+    expected_tracks = {"DR1", "DR2", "DR3", "IR1", "IR2", "IR3", "IR4", "IR5"}
+    missing_tracks = expected_tracks.difference(raw.keys())
+    if missing_tracks:
+        raise ScheduleError(f"Missing requirements for tracks: {sorted(missing_tracks)}")
+    for track, rotations in raw.items():
+        if track not in expected_tracks:
+            raise ScheduleError(f"Unknown track in requirements: {track}")
+        if not isinstance(rotations, dict):
+            raise ScheduleError(f"Requirements for {track} must be a mapping.")
+        entry: Dict[str, int] = {}
+        for rot in ROTATIONS:
+            if rot not in rotations:
+                raise ScheduleError(f"Requirements for {track} missing rotation {rot}.")
+            value = rotations[rot]
+            if not isinstance(value, int) or value < 0:
+                raise ScheduleError(
+                    f"Requirements for {track} {rot} must be a non-negative integer."
+                )
+            if value > num_blocks:
+                raise ScheduleError(
+                    f"Requirements for {track} {rot} exceed number of blocks ({num_blocks})."
+                )
+            entry[rot] = value
+        requirements[track] = entry
+    return requirements
+
+
 def load_schedule_input(path: str) -> ScheduleInput:
     with open(path, "r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
+    return load_schedule_input_from_data(data)
+
+
+def load_schedule_input_from_data(data: dict) -> ScheduleInput:
     block_labels = _parse_block_labels(data)
     residents = _parse_residents(data)
     blocked = _parse_blocked(data, block_labels)
     weights = _parse_weights(data)
     num_solutions = int(data.get("num_solutions", 1))
     constraint_modes, soft_priority = _parse_gui_constraints(data)
+    requirements = _parse_requirements(data, len(block_labels))
     return ScheduleInput(
         block_labels=block_labels,
         residents=residents,
@@ -217,6 +255,7 @@ def load_schedule_input(path: str) -> ScheduleInput:
         num_solutions=num_solutions,
         constraint_modes=constraint_modes,
         soft_priority=soft_priority,
+        requirements=requirements,
     )
 
 
@@ -422,72 +461,12 @@ def _add_kir_cap(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar])
         )
 
 
-def _add_dr1_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["DR1"]:
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-IR", ctx.num_blocks) == 2), assumption)
-        for rot in ["KIR", "MH-CT/US", "48X-IR", "48X-CT/US"]:
-            _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, rot, ctx.num_blocks) == 0), assumption)
-
-
-def _add_dr2_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["DR2"]:
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-CT/US", ctx.num_blocks) == 2), assumption)
-        for rot in ["KIR", "MH-IR", "48X-IR", "48X-CT/US"]:
-            _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, rot, ctx.num_blocks) == 0), assumption)
-
-
-def _add_dr3_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["DR3"]:
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-CT/US", ctx.num_blocks) == 2), assumption)
-        for rot in ["KIR", "MH-IR", "MH-CT/US", "48X-IR"]:
-            _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, rot, ctx.num_blocks) == 0), assumption)
-
-
-def _add_ir1_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["IR1"]:
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-IR", ctx.num_blocks) == 2), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-IR", ctx.num_blocks) == 2), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-CT/US", ctx.num_blocks) == 2), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "KIR", ctx.num_blocks) == 0), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-CT/US", ctx.num_blocks) == 0), assumption)
-
-
-def _add_ir2_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["IR2"]:
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-IR", ctx.num_blocks) == 4), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-IR", ctx.num_blocks) == 2), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "KIR", ctx.num_blocks) == 0), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-CT/US", ctx.num_blocks) == 0), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-CT/US", ctx.num_blocks) == 0), assumption)
-
-
-def _add_ir3_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["IR3"]:
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-IR", ctx.num_blocks) == 2), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-IR", ctx.num_blocks) == 2), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-CT/US", ctx.num_blocks) == 2), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "KIR", ctx.num_blocks) == 0), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-CT/US", ctx.num_blocks) == 0), assumption)
-
-
-def _add_ir4_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["IR4"]:
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "KIR", ctx.num_blocks) == 6), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-IR", ctx.num_blocks) == 6), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-IR", ctx.num_blocks) == 0), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-CT/US", ctx.num_blocks) == 0), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-CT/US", ctx.num_blocks) == 0), assumption)
-
-
-def _add_ir5_totals(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["IR5"]:
-        _enforce(
-            ctx.model.Add(sum(_total_units(ctx.u, resident_id, rot, ctx.num_blocks) for rot in ROTATIONS) == 2 * ctx.num_blocks),
-            assumption,
-        )
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "KIR", ctx.num_blocks) == 6), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "48X-IR", ctx.num_blocks) >= 4), assumption)
-        _enforce(ctx.model.Add(_total_units(ctx.u, resident_id, "MH-CT/US", ctx.num_blocks) == 0), assumption)
+def _add_track_requirements(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    for resident in ctx.schedule_input.residents:
+        req = ctx.schedule_input.requirements[resident.track]
+        for rot in ROTATIONS:
+            blocks = req[rot]
+            _enforce(ctx.model.Add(_total_units(ctx.u, resident.resident_id, rot, ctx.num_blocks) == 2 * blocks), assumption)
 
 
 def _add_ir5_mh_min_per_block(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
@@ -655,60 +634,11 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         add_hard=_add_kir_cap,
     ),
     ConstraintSpec(
-        id="dr1_totals",
-        label="DR1 totals (MH-IR only)",
-        softenable=False,
-        impact=80,
-        add_hard=_add_dr1_totals,
-    ),
-    ConstraintSpec(
-        id="dr2_totals",
-        label="DR2 totals (MH-CT/US only)",
-        softenable=False,
-        impact=80,
-        add_hard=_add_dr2_totals,
-    ),
-    ConstraintSpec(
-        id="dr3_totals",
-        label="DR3 totals (48X-CT/US only)",
-        softenable=False,
-        impact=80,
-        add_hard=_add_dr3_totals,
-    ),
-    ConstraintSpec(
-        id="ir1_totals",
-        label="IR1 totals",
-        softenable=False,
-        impact=80,
-        add_hard=_add_ir1_totals,
-    ),
-    ConstraintSpec(
-        id="ir2_totals",
-        label="IR2 totals",
-        softenable=False,
-        impact=80,
-        add_hard=_add_ir2_totals,
-    ),
-    ConstraintSpec(
-        id="ir3_totals",
-        label="IR3 totals",
-        softenable=False,
-        impact=80,
-        add_hard=_add_ir3_totals,
-    ),
-    ConstraintSpec(
-        id="ir4_totals",
-        label="IR4 totals",
-        softenable=False,
-        impact=80,
-        add_hard=_add_ir4_totals,
-    ),
-    ConstraintSpec(
-        id="ir5_totals",
-        label="IR5 totals",
+        id="track_requirements",
+        label="Per-track rotation requirements",
         softenable=False,
         impact=90,
-        add_hard=_add_ir5_totals,
+        add_hard=_add_track_requirements,
     ),
     ConstraintSpec(
         id="ir5_mh_min_per_block",
@@ -908,6 +838,7 @@ def _with_constraint_modes(schedule_input: ScheduleInput, overrides: Dict[str, s
         num_solutions=schedule_input.num_solutions,
         constraint_modes=modes,
         soft_priority=schedule_input.soft_priority,
+        requirements=schedule_input.requirements,
     )
 
 
@@ -1155,6 +1086,10 @@ def _solutions_to_csv(result: SolveResult) -> str:
                     if fte:
                         writer.writerow([idx, resident, block, rotation, fte])
     return output.getvalue()
+
+
+def result_to_csv(result: SolveResult) -> str:
+    return _solutions_to_csv(result)
 
 
 def main() -> None:

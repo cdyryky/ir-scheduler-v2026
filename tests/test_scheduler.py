@@ -34,13 +34,23 @@ class SchedulerTests(unittest.TestCase):
 
     def test_modes_disable_blocked(self):
         modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
-        modes["dr1_totals"] = "always"
+        modes["track_requirements"] = "always"
         modes["blocked"] = "always"
 
         data = {
             "blocks": 1,
             "residents": [{"id": "dr1a", "track": "DR1"}],
             "blocked": [{"resident": "dr1a", "block": 0, "rotation": "MH-IR"}],
+            "requirements": {
+                "DR1": {"KIR": 0, "MH-IR": 1, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR4": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR5": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+            },
             "gui": {"constraints": {"modes": modes}},
         }
 
@@ -91,13 +101,23 @@ class SchedulerTests(unittest.TestCase):
 
     def test_infeasibility_diagnostic_nonempty(self):
         modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
-        modes["dr1_totals"] = "always"
+        modes["track_requirements"] = "always"
         modes["blocked"] = "always"
 
         data = {
             "blocks": 1,
             "residents": [{"id": "dr1a", "track": "DR1"}],
             "blocked": [{"resident": "dr1a", "block": 0, "rotation": "MH-IR"}],
+            "requirements": {
+                "DR1": {"KIR": 0, "MH-IR": 1, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR4": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR5": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+            },
             "gui": {"constraints": {"modes": modes}},
         }
 

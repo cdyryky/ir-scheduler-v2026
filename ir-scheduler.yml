@@ -5,6 +5,55 @@ weights:
   first_timer: 30
   adj: 1
 num_solutions: 1
+requirements:
+  IR1:
+    KIR: 0
+    MH-IR: 1
+    MH-CT/US: 0
+    48X-IR: 1
+    48X-CT/US: 1
+  IR2:
+    KIR: 0
+    MH-IR: 2
+    MH-CT/US: 0
+    48X-IR: 1
+    48X-CT/US: 0
+  IR3:
+    KIR: 0
+    MH-IR: 1
+    MH-CT/US: 0
+    48X-IR: 1
+    48X-CT/US: 1
+  IR4:
+    KIR: 3
+    MH-IR: 3
+    MH-CT/US: 0
+    48X-IR: 0
+    48X-CT/US: 0
+  IR5:
+    KIR: 3
+    MH-IR: 8
+    MH-CT/US: 0
+    48X-IR: 2
+    48X-CT/US: 0
+  DR1:
+    KIR: 0
+    MH-IR: 1
+    MH-CT/US: 0
+    48X-IR: 0
+    48X-CT/US: 0
+  DR2:
+    KIR: 0
+    MH-IR: 0
+    MH-CT/US: 1
+    48X-IR: 0
+    48X-CT/US: 0
+  DR3:
+    KIR: 0
+    MH-IR: 0
+    MH-CT/US: 0
+    48X-IR: 0
+    48X-CT/US: 1
 gui:
   residents:
     IR:
@@ -38,14 +87,7 @@ gui:
       mh_total_minmax: always
       mh_ctus_cap: always
       kir_cap: always
-      dr1_totals: always
-      dr2_totals: always
-      dr3_totals: always
-      ir1_totals: always
-      ir2_totals: always
-      ir3_totals: always
-      ir4_totals: always
-      ir5_totals: always
+      track_requirements: always
       ir5_mh_min_per_block: always
       ir4_plus_mh_cap: always
       dr1_early_block: always

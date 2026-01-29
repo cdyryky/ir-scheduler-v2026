@@ -4,12 +4,15 @@ import os
 
 import streamlit as st
 import yaml
+import pandas as pd
 
 from ir_scheduler import CONSTRAINT_SPECS, ScheduleError, expand_residents
 
 
 IR_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5"]
 DR_TRACKS = ["DR1", "DR2", "DR3"]
+CLASS_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5", "DR1", "DR2", "DR3"]
+ROTATION_COLUMNS = ["KIR", "MH-CT/US", "48X-IR", "48X-CT/US", "MH-IR"]
 
 DEFAULT_IR_NAMES = {
     "IR1": ["Gaburak", "Miller"],
@@ -20,6 +23,16 @@ DEFAULT_IR_NAMES = {
 }
 
 DEFAULT_DR_COUNTS = {"DR1": 8, "DR2": 7, "DR3": 8}
+DEFAULT_CLASS_REQUIREMENTS = {
+    "IR1": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "MH-IR": 1},
+    "IR2": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 0, "MH-IR": 2},
+    "IR3": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "MH-IR": 1},
+    "IR4": {"KIR": 3, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "MH-IR": 3},
+    "IR5": {"KIR": 3, "MH-CT/US": 0, "48X-IR": 2, "48X-CT/US": 0, "MH-IR": 8},
+    "DR1": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "MH-IR": 1},
+    "DR2": {"KIR": 0, "MH-CT/US": 1, "48X-IR": 0, "48X-CT/US": 0, "MH-IR": 0},
+    "DR3": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 1, "MH-IR": 0},
+}
 
 
 def _default_gui_residents() -> dict:
@@ -37,6 +50,9 @@ def _default_config() -> dict:
         "num_solutions": 1,
         "gui": {
             "residents": _default_gui_residents(),
+            "class_year_requirements": {
+                track: dict(DEFAULT_CLASS_REQUIREMENTS[track]) for track in CLASS_TRACKS
+            },
             "constraints": {"modes": {}, "soft_priority": []},
         },
     }
@@ -74,6 +90,10 @@ def _normalize_config(cfg: dict) -> tuple[dict, bool]:
     gui_constraints = gui.setdefault("constraints", {})
     gui_constraints.setdefault("modes", {})
     gui_constraints.setdefault("soft_priority", [])
+    gui.setdefault(
+        "class_year_requirements",
+        {track: dict(DEFAULT_CLASS_REQUIREMENTS[track]) for track in CLASS_TRACKS},
+    )
 
     if "residents" not in gui:
         gui_residents, ok = _infer_gui_residents(cfg.get("residents", []))
@@ -103,6 +123,26 @@ def _spec_label(spec) -> str:
     if not spec.softenable:
         label += " (not softenable)"
     return label
+
+
+def _num_blocks(cfg: dict) -> int:
+    blocks = cfg.get("blocks")
+    if isinstance(blocks, int):
+        return blocks
+    if isinstance(blocks, list):
+        return len(blocks)
+    num_blocks = cfg.get("num_blocks")
+    if isinstance(num_blocks, int):
+        return num_blocks
+    return 0
+
+
+def _track_counts(cfg: dict) -> dict:
+    counts = {track: 2 for track in IR_TRACKS}
+    dr_counts = cfg["gui"]["residents"]["DR_counts"]
+    for track in DR_TRACKS:
+        counts[track] = int(dr_counts.get(track, 0))
+    return counts
 
 
 st.set_page_config(page_title="IR/DR Scheduler Config", layout="wide")
@@ -148,7 +188,14 @@ if not st.session_state.get("infer_ok", True):
 st.divider()
 
 resident_error = None
-tabs = st.tabs(["Resident management", "Constraint enforcement", "Soft constraint prioritization"])
+tabs = st.tabs(
+    [
+        "Resident management",
+        "Class & year assignments",
+        "Constraint enforcement",
+        "Soft constraint prioritization",
+    ]
+)
 
 with tabs[0]:
     st.subheader("Residents")
@@ -177,6 +224,165 @@ with tabs[0]:
         st.error(resident_error)
 
 with tabs[1]:
+    st.subheader("Class & year assignments")
+    num_blocks = _num_blocks(cfg)
+    req = cfg["gui"]["class_year_requirements"]
+    rows = []
+    for track in CLASS_TRACKS:
+        row = {"Track": track}
+        for rot in ROTATION_COLUMNS:
+            row[rot] = int(req.get(track, {}).get(rot, 0))
+        if track == "IR5":
+            non_mh = sum(row[rot] for rot in ROTATION_COLUMNS if rot != "MH-IR")
+            row["MH-IR"] = max(0, num_blocks - non_mh)
+        rows.append(row)
+
+    edited = st.data_editor(
+        rows,
+        hide_index=True,
+        num_rows="fixed",
+        column_config={
+            "Track": st.column_config.TextColumn(disabled=True),
+            "KIR": st.column_config.NumberColumn(min_value=0, step=1),
+            "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
+            "48X-IR": st.column_config.NumberColumn(min_value=0, step=1),
+            "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
+            "MH-IR": st.column_config.NumberColumn(min_value=0, step=1),
+        },
+        key="class_year_table",
+    )
+
+    updated_req = {}
+    for row in edited:
+        track = row["Track"]
+        updated_req[track] = {rot: int(row.get(rot, 0)) for rot in ROTATION_COLUMNS}
+    if "IR5" in updated_req:
+        non_mh = sum(
+            updated_req["IR5"][rot] for rot in ROTATION_COLUMNS if rot != "MH-IR"
+        )
+        if non_mh > num_blocks:
+            st.error("IR5 non-MH-IR total exceeds number of blocks; MH-IR set to 0.")
+        updated_req["IR5"]["MH-IR"] = max(0, num_blocks - non_mh)
+
+    cfg["gui"]["class_year_requirements"] = updated_req
+
+    requirements = {}
+    for track in CLASS_TRACKS:
+        requirements[track] = dict(updated_req[track])
+    cfg["requirements"] = requirements
+
+    counts = _track_counts(cfg)
+    avail = {rot: 0 for rot in ROTATION_COLUMNS}
+    for track in CLASS_TRACKS:
+        for rot in ROTATION_COLUMNS:
+            avail[rot] += counts[track] * requirements[track][rot]
+
+    st.markdown("**Rotation FTE availability vs. coverage**")
+    rotation_rows = [
+        {
+            "Rotation": "48X-IR",
+            "Available": avail["48X-IR"],
+            "ReqMin": num_blocks,
+            "ReqMax": num_blocks,
+        },
+        {
+            "Rotation": "48X-CT/US",
+            "Available": avail["48X-CT/US"],
+            "ReqMin": num_blocks,
+            "ReqMax": num_blocks,
+        },
+        {"Rotation": "MH-IR", "Available": avail["MH-IR"], "ReqMin": None, "ReqMax": None},
+        {
+            "Rotation": "MH-CT/US",
+            "Available": avail["MH-CT/US"],
+            "ReqMin": None,
+            "ReqMax": num_blocks,
+        },
+        {
+            "Rotation": "KIR",
+            "Available": avail["KIR"],
+            "ReqMin": None,
+            "ReqMax": num_blocks * 2,
+        },
+    ]
+    rotation_df = pd.DataFrame(rotation_rows)
+    rotation_df[["ReqMin", "ReqMax"]] = rotation_df[["ReqMin", "ReqMax"]].astype("Int64")
+
+    def _fmt_required(req_min, req_max) -> str:
+        if pd.isna(req_min) and pd.isna(req_max):
+            return "-"
+        if pd.notna(req_min) and pd.notna(req_max):
+            req_min_i = int(req_min)
+            req_max_i = int(req_max)
+            if req_min_i == req_max_i:
+                return str(req_min_i)
+            return f"{req_min_i} - {req_max_i}"
+        if pd.isna(req_min) and pd.notna(req_max):
+            return f"<= {int(req_max)}"
+        if pd.notna(req_min) and pd.isna(req_max):
+            return f">= {int(req_min)}"
+        return "-"
+
+    rotation_df["Required"] = rotation_df.apply(
+        lambda row: _fmt_required(row["ReqMin"], row["ReqMax"]),
+        axis=1,
+    )
+
+    def _make_row_style(source_df: pd.DataFrame):
+        def _row_style(row):
+            src = source_df.loc[row.name]
+            req_min = src["ReqMin"]
+            req_max = src["ReqMax"]
+            if pd.isna(req_min) and pd.isna(req_max):
+                return [""] * len(row)
+            available = src["Available"]
+            ok = True
+            if pd.notna(req_min) and available < req_min:
+                ok = False
+            if pd.notna(req_max) and available > req_max:
+                ok = False
+            color = "#e9f7ef" if ok else "#fdecea"
+            return [f"background-color: {color}"] * len(row)
+
+        return _row_style
+
+    rotation_display = rotation_df[["Rotation", "Available", "Required"]]
+    st.dataframe(
+        rotation_display.style.apply(_make_row_style(rotation_df), axis=1),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.markdown("**Location totals (per year)**")
+    mh_total = avail["MH-IR"] + avail["MH-CT/US"]
+    location_rows = [
+        {
+            "Location": "MH total",
+            "Available": mh_total,
+            "ReqMin": num_blocks * 3,
+            "ReqMax": num_blocks * 4,
+        },
+        {
+            "Location": "48X total",
+            "Available": avail["48X-IR"] + avail["48X-CT/US"],
+            "ReqMin": num_blocks * 2,
+            "ReqMax": num_blocks * 2,
+        },
+    ]
+    location_df = pd.DataFrame(location_rows)
+    location_df[["ReqMin", "ReqMax"]] = location_df[["ReqMin", "ReqMax"]].astype("Int64")
+    location_df["Required"] = location_df.apply(
+        lambda row: _fmt_required(row["ReqMin"], row["ReqMax"]),
+        axis=1,
+    )
+    location_display = location_df[["Location", "Available", "Required"]]
+    st.dataframe(
+        location_display.style.apply(_make_row_style(location_df), axis=1),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+with tabs[2]:
     st.subheader("Constraint modes")
     modes = cfg["gui"]["constraints"].get("modes", {})
     for spec in CONSTRAINT_SPECS:
@@ -197,7 +403,7 @@ with tabs[1]:
         modes[spec.id] = selection
     cfg["gui"]["constraints"]["modes"] = modes
 
-with tabs[2]:
+with tabs[3]:
     st.subheader("Soft constraint priority")
     modes = cfg["gui"]["constraints"].get("modes", {})
     if_able_ids = [
