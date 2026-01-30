@@ -19,7 +19,8 @@ from ir_scheduler import (
 IR_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5"]
 DR_TRACKS = ["DR1", "DR2", "DR3"]
 CLASS_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5", "DR1", "DR2", "DR3"]
-ROTATION_COLUMNS = ["KIR", "MH-CT/US", "48X-IR", "48X-CT/US", "MH-IR"]
+ROTATION_COLUMNS = ["MH-IR", "MH-CT/US", "48X-IR", "48X-CT/US", "KIR"]
+DISPLAY_COLUMNS = ROTATION_COLUMNS + ["Total Blocks"]
 
 DEFAULT_IR_NAMES = {
     "IR1": ["Gaburak", "Miller"],
@@ -31,14 +32,14 @@ DEFAULT_IR_NAMES = {
 
 DEFAULT_DR_COUNTS = {"DR1": 8, "DR2": 7, "DR3": 8}
 DEFAULT_CLASS_REQUIREMENTS = {
-    "IR1": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "MH-IR": 1},
-    "IR2": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 0, "MH-IR": 2},
-    "IR3": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "MH-IR": 1},
-    "IR4": {"KIR": 3, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "MH-IR": 3},
-    "IR5": {"KIR": 3, "MH-CT/US": 0, "48X-IR": 2, "48X-CT/US": 0, "MH-IR": 8},
-    "DR1": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "MH-IR": 1},
-    "DR2": {"KIR": 0, "MH-CT/US": 1, "48X-IR": 0, "48X-CT/US": 0, "MH-IR": 0},
-    "DR3": {"KIR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 1, "MH-IR": 0},
+    "IR1": {"MH-IR": 1, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "KIR": 0},
+    "IR2": {"MH-IR": 2, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 0, "KIR": 0},
+    "IR3": {"MH-IR": 1, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "KIR": 0},
+    "IR4": {"MH-IR": 3, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "KIR": 3},
+    "IR5": {"MH-IR": 8, "MH-CT/US": 0, "48X-IR": 2, "48X-CT/US": 0, "KIR": 3},
+    "DR1": {"MH-IR": 1, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "KIR": 0},
+    "DR2": {"MH-IR": 0, "MH-CT/US": 1, "48X-IR": 0, "48X-CT/US": 0, "KIR": 0},
+    "DR3": {"MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 1, "KIR": 0},
 }
 
 
@@ -163,6 +164,12 @@ st.markdown(
         height: 2.5rem;
         padding: 0 1.1rem;
     }
+    /* Make the drag/drop area taller so it visually aligns with the Save column. */
+    section[data-testid="stFileUploaderDropzone"] {
+        min-height: clamp(7.5rem, 12vh, 10.5rem);
+        display: flex;
+        align-items: center;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -171,21 +178,6 @@ st.markdown(
 st.title("IR/DR Scheduler Configurator")
 
 _ensure_cfg_state()
-
-top_cols = st.columns([3, 1])
-with top_cols[0]:
-    uploaded = st.file_uploader("Load YAML", type=["yml", "yaml"])
-download_slot = top_cols[1].empty()
-notice_slot = st.empty()
-if uploaded:
-    try:
-        loaded = yaml.safe_load(uploaded) or {}
-    except yaml.YAMLError as exc:
-        st.error(f"Failed to parse YAML: {exc}")
-    else:
-        cfg, ok = _normalize_config(loaded)
-        st.session_state["cfg"] = cfg
-        st.session_state["infer_ok"] = ok
 
 cfg = st.session_state["cfg"]
 
@@ -197,11 +189,12 @@ st.divider()
 resident_error = None
 tabs = st.tabs(
     [
-        "Resident management",
-        "Class & year assignments",
-        "Constraint enforcement",
-        "Soft constraint prioritization",
+        "Residents",
+        "Class/Year Assignments",
+        "Constraints",
+        "Prioritization",
         "Solve",
+        "Save/Load Configuration",
     ]
 )
 
@@ -232,17 +225,16 @@ with tabs[0]:
         st.error(resident_error)
 
 with tabs[1]:
-    st.subheader("Class & year assignments")
+    st.subheader("Class/Year Assignments")
     num_blocks = _num_blocks(cfg)
     req = cfg["gui"]["class_year_requirements"]
+    prev_req = {track: dict(req.get(track, {})) for track in CLASS_TRACKS}
     rows = []
     for track in CLASS_TRACKS:
         row = {"Track": track}
         for rot in ROTATION_COLUMNS:
             row[rot] = int(req.get(track, {}).get(rot, 0))
-        if track == "IR5":
-            non_mh = sum(row[rot] for rot in ROTATION_COLUMNS if rot != "MH-IR")
-            row["MH-IR"] = max(0, num_blocks - non_mh)
+        row["Total Blocks"] = sum(row[rot] for rot in ROTATION_COLUMNS)
         rows.append(row)
 
     edited = st.data_editor(
@@ -251,11 +243,12 @@ with tabs[1]:
         num_rows="fixed",
         column_config={
             "Track": st.column_config.TextColumn(disabled=True),
-            "KIR": st.column_config.NumberColumn(min_value=0, step=1),
+            "MH-IR": st.column_config.NumberColumn(min_value=0, step=1),
             "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
             "48X-IR": st.column_config.NumberColumn(min_value=0, step=1),
             "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
-            "MH-IR": st.column_config.NumberColumn(min_value=0, step=1),
+            "KIR": st.column_config.NumberColumn(min_value=0, step=1),
+            "Total Blocks": st.column_config.NumberColumn(disabled=True),
         },
         key="class_year_table",
     )
@@ -264,15 +257,11 @@ with tabs[1]:
     for row in edited:
         track = row["Track"]
         updated_req[track] = {rot: int(row.get(rot, 0)) for rot in ROTATION_COLUMNS}
-    if "IR5" in updated_req:
-        non_mh = sum(
-            updated_req["IR5"][rot] for rot in ROTATION_COLUMNS if rot != "MH-IR"
-        )
-        if non_mh > num_blocks:
-            st.error("IR5 non-MH-IR total exceeds number of blocks; MH-IR set to 0.")
-        updated_req["IR5"]["MH-IR"] = max(0, num_blocks - non_mh)
 
     cfg["gui"]["class_year_requirements"] = updated_req
+    if updated_req != prev_req:
+        # Trigger a second rerun so computed cells (e.g., Total Blocks) update immediately.
+        st.rerun()
 
     requirements = {}
     for track in CLASS_TRACKS:
@@ -284,6 +273,41 @@ with tabs[1]:
     for track in CLASS_TRACKS:
         for rot in ROTATION_COLUMNS:
             avail[rot] += counts[track] * requirements[track][rot]
+
+    # Read-only display table that includes a shaded Total Blocks column and a Total FTE row.
+    display_rows = []
+    for track in CLASS_TRACKS:
+        r = {"Track": track}
+        for rot in ROTATION_COLUMNS:
+            r[rot] = requirements[track][rot]
+        r["Total Blocks"] = sum(requirements[track][rot] for rot in ROTATION_COLUMNS)
+        display_rows.append(r)
+    total_fte_row = {"Track": "Total FTE"}
+    for rot in ROTATION_COLUMNS:
+        total_fte_row[rot] = avail[rot]
+    total_fte_row["Total Blocks"] = None
+    display_rows.append(total_fte_row)
+
+    display_df = pd.DataFrame(display_rows, columns=["Track"] + DISPLAY_COLUMNS)
+    for col in ROTATION_COLUMNS + ["Total Blocks"]:
+        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").astype("Int64")
+
+    def _style_totals(df: pd.DataFrame) -> pd.DataFrame:
+        styles = pd.DataFrame("", index=df.index, columns=df.columns)
+        if "Total Blocks" in df.columns:
+            styles["Total Blocks"] = "background-color: #f4f4f4; font-weight: 600;"
+        total_idx = df.index[df["Track"] == "Total FTE"]
+        if len(total_idx) == 1:
+            styles.loc[total_idx[0], :] = (
+                styles.loc[total_idx[0], :] + "background-color: #eef6ff; font-weight: 700;"
+            )
+        return styles
+
+    st.dataframe(
+        display_df.style.apply(_style_totals, axis=None).format(na_rep=""),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.markdown("**Rotation FTE availability vs. coverage**")
     rotation_rows = [
@@ -543,20 +567,91 @@ with tabs[4]:
                 use_container_width=True,
             )
 
-st.divider()
+with tabs[5]:
+    st.subheader("Save/Load Configuration")
 
-yaml_text = yaml.safe_dump(cfg, sort_keys=False)
-saved = download_slot.download_button(
-    "Download YAML",
-    data=yaml_text,
-    file_name="ir-scheduler.yml",
-    mime="text/yaml",
-)
-if saved:
-    notice_slot.info(
-        f"Move the downloaded file 'ir-scheduler.yml' into:\n{os.getcwd()}",
-        icon="📌",
-    )
+    def _reset_widget_state() -> None:
+        prefixes = (
+            "ir_",
+            "dr_",
+            "mode_",
+            "prio_",
+            "class_year_table",
+            "num_solutions_input",
+            "solution_select",
+        )
+        for key in list(st.session_state.keys()):
+            if key.startswith(prefixes):
+                del st.session_state[key]
 
-st.subheader("Current YAML")
-st.code(yaml_text, language="yaml")
+    load_col, save_col = st.columns(2, gap="large")
+
+    with load_col:
+        st.markdown("### Load")
+        st.caption("Drag & drop a `.yml`/`.yaml` to preview, then apply it to the current session.")
+        uploaded = st.file_uploader(
+            "Drop YAML here",
+            type=["yml", "yaml"],
+            label_visibility="collapsed",
+            key="config_uploader",
+        )
+
+        if not uploaded:
+            # If the user clears the uploader (clicks the X), also clear any pending preview state.
+            st.session_state.pop("pending_cfg", None)
+            st.session_state.pop("pending_infer_ok", None)
+        else:
+            try:
+                loaded = yaml.safe_load(uploaded) or {}
+            except yaml.YAMLError as exc:
+                st.error(f"Failed to parse YAML: {exc}")
+            else:
+                try:
+                    cfg_loaded, ok = _normalize_config(loaded)
+                except Exception as exc:
+                    st.error(f"Invalid configuration: {exc}")
+                else:
+                    st.session_state["pending_cfg"] = cfg_loaded
+                    st.session_state["pending_infer_ok"] = ok
+
+        pending = st.session_state.get("pending_cfg")
+        if pending and uploaded:
+            st.success("Loaded file parsed successfully. Review and apply when ready.")
+            btn_apply, btn_discard = st.columns([1, 1])
+            if btn_apply.button("Apply loaded configuration", type="primary", use_container_width=True):
+                st.session_state["cfg"] = st.session_state.pop("pending_cfg")
+                st.session_state["infer_ok"] = st.session_state.pop("pending_infer_ok", True)
+                st.session_state["config_uploader"] = None
+                _reset_widget_state()
+                st.rerun()
+            if btn_discard.button("Discard", use_container_width=True):
+                st.session_state.pop("pending_cfg", None)
+                st.session_state.pop("pending_infer_ok", None)
+                st.session_state["config_uploader"] = None
+                st.rerun()
+
+    with save_col:
+        st.markdown("### Save")
+        st.caption("Download the current in-app configuration as a YAML file.")
+        filename = st.text_input(
+            "Filename",
+            value="ir-scheduler.yml",
+            key="config_filename",
+        )
+        yaml_text = yaml.safe_dump(cfg, sort_keys=False)
+        saved = st.download_button(
+            "Download configuration",
+            data=yaml_text,
+            file_name=filename or "ir-scheduler.yml",
+            mime="text/yaml",
+            use_container_width=True,
+        )
+        if saved:
+            st.info(f"Downloaded. If you want the CLI default to pick it up, move it into:\n{os.getcwd()}")
+
+    with st.expander("Current YAML", expanded=False):
+        st.code(yaml.safe_dump(st.session_state["cfg"], sort_keys=False), language="yaml")
+        if st.session_state.get("pending_cfg"):
+            st.markdown("---")
+            st.caption("Pending YAML (not applied yet)")
+            st.code(yaml.safe_dump(st.session_state["pending_cfg"], sort_keys=False), language="yaml")
