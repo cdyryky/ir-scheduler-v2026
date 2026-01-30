@@ -15,6 +15,8 @@ from ir_scheduler import (
     solve_schedule,
 )
 
+APP_TITLE = "IR Schedulator 5000"
+
 
 IR_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5"]
 DR_TRACKS = ["DR1", "DR2", "DR3"]
@@ -153,7 +155,7 @@ def _track_counts(cfg: dict) -> dict:
     return counts
 
 
-st.set_page_config(page_title="IR/DR Scheduler Config", layout="wide")
+st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 st.markdown(
     """
@@ -170,12 +172,98 @@ st.markdown(
         display: flex;
         align-items: center;
     }
+
+    /* Retro header */
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Orbitron:wght@700;900&display=swap');
+    .retro-hero {
+        position: relative;
+        border-radius: 18px;
+        padding: 1.15rem 1.25rem 1.05rem 1.25rem;
+        margin: 0 0 0.9rem 0;
+        background:
+          radial-gradient(1100px 180px at 20% 0%, rgba(255, 232, 102, 0.26), rgba(0,0,0,0) 55%),
+          radial-gradient(900px 220px at 85% 15%, rgba(124, 92, 255, 0.18), rgba(0,0,0,0) 55%),
+          linear-gradient(135deg, rgba(0, 183, 255, 0.12), rgba(255, 46, 167, 0.10)),
+          #0b0f18;
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow:
+          0 18px 40px rgba(0,0,0,0.18),
+          inset 0 1px 0 rgba(255,255,255,0.06);
+        overflow: hidden;
+    }
+    .retro-hero:before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,0.06) 0px,
+          rgba(255,255,255,0.06) 1px,
+          rgba(0,0,0,0) 3px,
+          rgba(0,0,0,0) 7px
+        );
+        opacity: 0.16;
+        pointer-events: none;
+        mix-blend-mode: overlay;
+    }
+    .retro-row {
+        position: relative;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    .retro-title {
+        position: relative;
+        margin: 0;
+        font-family: 'Orbitron', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        font-size: clamp(26px, 3.2vw, 44px);
+        color: #eaf6ff;
+        text-shadow:
+          0 2px 0 rgba(0,0,0,0.25),
+          0 0 18px rgba(0, 183, 255, 0.20),
+          0 0 22px rgba(255, 46, 167, 0.16);
+    }
+    .retro-badge {
+        position: relative;
+        font-family: 'Press Start 2P', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1;
+        color: #0b0f18;
+        padding: 0.55rem 0.7rem;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #ffe866, #00b7ff);
+        box-shadow: 0 10px 18px rgba(0,0,0,0.20);
+        white-space: nowrap;
+    }
+    .retro-sub {
+        position: relative;
+        margin: 0.55rem 0 0 0;
+        color: rgba(234, 246, 255, 0.78);
+        font-size: 14px;
+        letter-spacing: 0.02em;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("IR/DR Scheduler Configurator")
+st.markdown(
+    f"""
+    <div class="retro-hero">
+      <div class="retro-row">
+        <h1 class="retro-title">{APP_TITLE}</h1>
+        <div class="retro-badge">CONFIG MODE</div>
+      </div>
+      <p class="retro-sub">Build residents, set constraints and priorities, then solve and export.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 _ensure_cfg_state()
 
@@ -584,16 +672,24 @@ with tabs[5]:
             if key.startswith(prefixes):
                 del st.session_state[key]
 
+    def _clear_pending_and_uploader() -> None:
+        st.session_state.pop("pending_cfg", None)
+        st.session_state.pop("pending_infer_ok", None)
+        st.session_state["uploader_nonce"] = int(st.session_state.get("uploader_nonce", 0)) + 1
+
     load_col, save_col = st.columns(2, gap="large")
 
     with load_col:
         st.markdown("### Load")
         st.caption("Drag & drop a `.yml`/`.yaml` to preview, then apply it to the current session.")
+        if "uploader_nonce" not in st.session_state:
+            st.session_state["uploader_nonce"] = 0
+        uploader_key = f"config_uploader_{st.session_state['uploader_nonce']}"
         uploaded = st.file_uploader(
             "Drop YAML here",
             type=["yml", "yaml"],
             label_visibility="collapsed",
-            key="config_uploader",
+            key=uploader_key,
         )
 
         if not uploaded:
@@ -621,13 +717,11 @@ with tabs[5]:
             if btn_apply.button("Apply loaded configuration", type="primary", use_container_width=True):
                 st.session_state["cfg"] = st.session_state.pop("pending_cfg")
                 st.session_state["infer_ok"] = st.session_state.pop("pending_infer_ok", True)
-                st.session_state["config_uploader"] = None
+                _clear_pending_and_uploader()
                 _reset_widget_state()
                 st.rerun()
             if btn_discard.button("Discard", use_container_width=True):
-                st.session_state.pop("pending_cfg", None)
-                st.session_state.pop("pending_infer_ok", None)
-                st.session_state["config_uploader"] = None
+                _clear_pending_and_uploader()
                 st.rerun()
 
     with save_col:
