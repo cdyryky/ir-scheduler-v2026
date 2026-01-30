@@ -6,6 +6,17 @@ import streamlit as st
 import yaml
 import pandas as pd
 
+from ir_config import (
+    CLASS_TRACKS,
+    DEFAULT_CLASS_REQUIREMENTS,
+    DEFAULT_DR_COUNTS,
+    DEFAULT_IR_NAMES,
+    DR_TRACKS,
+    IR_TRACKS,
+    ROTATION_COLUMNS,
+    default_config,
+    prepare_config,
+)
 from ir_scheduler import (
     CONSTRAINT_SPECS,
     ScheduleError,
@@ -18,104 +29,11 @@ from ir_scheduler import (
 APP_TITLE = "IR Schedulator 5000"
 
 
-IR_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5"]
-DR_TRACKS = ["DR1", "DR2", "DR3"]
-CLASS_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5", "DR1", "DR2", "DR3"]
-ROTATION_COLUMNS = ["MH-IR", "MH-CT/US", "48X-IR", "48X-CT/US", "KIR"]
 DISPLAY_COLUMNS = ROTATION_COLUMNS + ["Total Blocks"]
-
-DEFAULT_IR_NAMES = {
-    "IR1": ["Gaburak", "Miller"],
-    "IR2": ["Qi", "Verst"],
-    "IR3": ["Madsen", "Mahmoud"],
-    "IR4": ["Javan", "Virk"],
-    "IR5": ["Brock", "Katz"],
-}
-
-DEFAULT_DR_COUNTS = {"DR1": 8, "DR2": 7, "DR3": 8}
-DEFAULT_CLASS_REQUIREMENTS = {
-    "IR1": {"MH-IR": 1, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "KIR": 0},
-    "IR2": {"MH-IR": 2, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 0, "KIR": 0},
-    "IR3": {"MH-IR": 1, "MH-CT/US": 0, "48X-IR": 1, "48X-CT/US": 1, "KIR": 0},
-    "IR4": {"MH-IR": 3, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "KIR": 3},
-    "IR5": {"MH-IR": 8, "MH-CT/US": 0, "48X-IR": 2, "48X-CT/US": 0, "KIR": 3},
-    "DR1": {"MH-IR": 1, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0, "KIR": 0},
-    "DR2": {"MH-IR": 0, "MH-CT/US": 1, "48X-IR": 0, "48X-CT/US": 0, "KIR": 0},
-    "DR3": {"MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 1, "KIR": 0},
-}
-
-
-def _default_gui_residents() -> dict:
-    return {
-        "IR": {track: list(DEFAULT_IR_NAMES[track]) for track in IR_TRACKS},
-        "DR_counts": dict(DEFAULT_DR_COUNTS),
-    }
-
-
-def _default_config() -> dict:
-    return {
-        "blocks": 13,
-        "blocked": [],
-        "weights": {"consec": 100, "first_timer": 30, "adj": 1},
-        "num_solutions": 1,
-        "gui": {
-            "residents": _default_gui_residents(),
-            "class_year_requirements": {
-                track: dict(DEFAULT_CLASS_REQUIREMENTS[track]) for track in CLASS_TRACKS
-            },
-            "constraints": {"modes": {}, "soft_priority": []},
-        },
-    }
-
-
-def _infer_gui_residents(residents: list) -> tuple[dict, bool]:
-    ir_map = {track: [] for track in IR_TRACKS}
-    dr_counts = {track: 0 for track in DR_TRACKS}
-    for entry in residents or []:
-        track = entry.get("track") if isinstance(entry, dict) else None
-        resident_id = entry.get("id") if isinstance(entry, dict) else None
-        if track in ir_map and resident_id:
-            ir_map[track].append(str(resident_id))
-        elif track in dr_counts:
-            dr_counts[track] += 1
-
-    ok = all(len(ir_map[track]) == 2 for track in IR_TRACKS)
-    gui_ir = {track: ir_map[track] if ok else list(DEFAULT_IR_NAMES[track]) for track in IR_TRACKS}
-    if not ok:
-        dr_counts = dict(DEFAULT_DR_COUNTS)
-    return {"IR": gui_ir, "DR_counts": dr_counts}, ok
-
-
-def _normalize_config(cfg: dict) -> tuple[dict, bool]:
-    if not isinstance(cfg, dict):
-        cfg = {}
-
-    if "blocks" not in cfg and "num_blocks" not in cfg:
-        cfg["blocks"] = 13
-    cfg.setdefault("blocked", [])
-    cfg.setdefault("weights", {"consec": 100, "first_timer": 30, "adj": 1})
-    cfg.setdefault("num_solutions", 1)
-
-    gui = cfg.setdefault("gui", {})
-    gui_constraints = gui.setdefault("constraints", {})
-    gui_constraints.setdefault("modes", {})
-    gui_constraints.setdefault("soft_priority", [])
-    gui.setdefault(
-        "class_year_requirements",
-        {track: dict(DEFAULT_CLASS_REQUIREMENTS[track]) for track in CLASS_TRACKS},
-    )
-
-    if "residents" not in gui:
-        gui_residents, ok = _infer_gui_residents(cfg.get("residents", []))
-        gui["residents"] = gui_residents
-        return cfg, ok
-
-    return cfg, True
-
 
 def _ensure_cfg_state():
     if "cfg" not in st.session_state:
-        cfg, ok = _normalize_config(_default_config())
+        cfg, ok = prepare_config(default_config())
         st.session_state["cfg"] = cfg
         st.session_state["infer_ok"] = ok
 
@@ -703,7 +621,7 @@ with tabs[5]:
                 st.error(f"Failed to parse YAML: {exc}")
             else:
                 try:
-                    cfg_loaded, ok = _normalize_config(loaded)
+                    cfg_loaded, ok = prepare_config(loaded)
                 except Exception as exc:
                     st.error(f"Invalid configuration: {exc}")
                 else:

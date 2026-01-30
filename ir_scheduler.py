@@ -11,6 +11,8 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 import yaml
 from ortools.sat.python import cp_model
 
+from ir_config import prepare_config
+
 
 ROTATIONS = ["KIR", "MH-IR", "MH-CT/US", "48X-IR", "48X-CT/US"]
 
@@ -240,6 +242,7 @@ def load_schedule_input(path: str) -> ScheduleInput:
 
 
 def load_schedule_input_from_data(data: dict) -> ScheduleInput:
+    data, _ = prepare_config(data)
     block_labels = _parse_block_labels(data)
     residents = _parse_residents(data)
     blocked = _parse_blocked(data, block_labels)
