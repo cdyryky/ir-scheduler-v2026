@@ -365,24 +365,26 @@ with tabs[1]:
         row["Total Blocks"] = sum(row[rot] for rot in ROTATION_COLUMNS)
         rows.append(row)
 
-    edited = st.data_editor(
-        rows,
-        hide_index=True,
-        num_rows="fixed",
-        column_config={
-            "Track": st.column_config.TextColumn(disabled=True),
-            "MH-IR": st.column_config.NumberColumn(min_value=0, step=1),
-            "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
-            "48X-IR": st.column_config.NumberColumn(min_value=0, step=1),
-            "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
-            "KIR": st.column_config.NumberColumn(min_value=0, step=1),
-            "Total Blocks": st.column_config.NumberColumn(disabled=True),
-        },
-        key="class_year_table",
-    )
+    rows_df = pd.DataFrame(rows, columns=["Track"] + DISPLAY_COLUMNS)
+    with st.expander("Edit class/year requirements", expanded=False):
+        edited_df = st.data_editor(
+            rows_df,
+            hide_index=True,
+            num_rows="fixed",
+            column_config={
+                "Track": st.column_config.TextColumn(disabled=True),
+                "MH-IR": st.column_config.NumberColumn(min_value=0, step=1),
+                "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
+                "48X-IR": st.column_config.NumberColumn(min_value=0, step=1),
+                "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
+                "KIR": st.column_config.NumberColumn(min_value=0, step=1),
+                "Total Blocks": st.column_config.NumberColumn(disabled=True),
+            },
+            key="class_year_table",
+        )
 
     updated_req = {}
-    for row in edited:
+    for row in edited_df.to_dict("records"):
         track = row["Track"]
         updated_req[track] = {rot: int(row.get(rot, 0)) for rot in ROTATION_COLUMNS}
 
@@ -402,7 +404,6 @@ with tabs[1]:
         for rot in ROTATION_COLUMNS:
             avail[rot] += counts[track] * requirements[track][rot]
 
-    # Read-only display table that includes a shaded Total Blocks column and a Total FTE row.
     display_rows = []
     for track in CLASS_TRACKS:
         r = {"Track": track}
@@ -410,29 +411,20 @@ with tabs[1]:
             r[rot] = requirements[track][rot]
         r["Total Blocks"] = sum(requirements[track][rot] for rot in ROTATION_COLUMNS)
         display_rows.append(r)
-    total_fte_row = {"Track": "Total FTE"}
-    for rot in ROTATION_COLUMNS:
-        total_fte_row[rot] = avail[rot]
-    total_fte_row["Total Blocks"] = None
-    display_rows.append(total_fte_row)
 
     display_df = pd.DataFrame(display_rows, columns=["Track"] + DISPLAY_COLUMNS)
     for col in ROTATION_COLUMNS + ["Total Blocks"]:
         display_df[col] = pd.to_numeric(display_df[col], errors="coerce").astype("Int64")
 
-    def _style_totals(df: pd.DataFrame) -> pd.DataFrame:
-        styles = pd.DataFrame("", index=df.index, columns=df.columns)
-        if "Total Blocks" in df.columns:
-            styles["Total Blocks"] = "background-color: #f4f4f4; font-weight: 600;"
-        total_idx = df.index[df["Track"] == "Total FTE"]
-        if len(total_idx) == 1:
-            styles.loc[total_idx[0], :] = (
-                styles.loc[total_idx[0], :] + "background-color: #eef6ff; font-weight: 700;"
-            )
-        return styles
+    def _shade_zero(value: int | float | None) -> str:
+        if value is None or pd.isna(value):
+            return ""
+        if int(value) == 0:
+            return "background-color: #f4f4f4; color: #8a8a8a;"
+        return "background-color: #e9f7ef; font-weight: 600;"
 
     st.dataframe(
-        display_df.style.apply(_style_totals, axis=None).format(na_rep=""),
+        display_df.style.map(_shade_zero, subset=ROTATION_COLUMNS + ["Total Blocks"]),
         use_container_width=True,
         hide_index=True,
     )
