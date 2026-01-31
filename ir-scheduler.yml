@@ -79,9 +79,9 @@ gui:
   constraints:
     modes:
       one_place: always
+      block_total_zero_or_full: always
       blocked: always
       no_half_non_ir5: always
-      ir5_split_coupling: always
       coverage_48x_ir: always
       coverage_48x_ctus: always
       mh_total_minmax: always

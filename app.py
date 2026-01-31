@@ -2,6 +2,7 @@ from typing import Optional
 
 import os
 from datetime import date
+import math
 
 import streamlit as st
 import yaml
@@ -351,7 +352,7 @@ with tabs[1]:
     for track in CLASS_TRACKS:
         row = {"Track": track}
         for rot in ROTATION_COLUMNS:
-            row[rot] = int(req.get(track, {}).get(rot, 0))
+            row[rot] = float(req.get(track, {}).get(rot, 0))
         row["Total Blocks"] = sum(row[rot] for rot in ROTATION_COLUMNS)
         rows.append(row)
 
@@ -363,11 +364,11 @@ with tabs[1]:
             num_rows="fixed",
             column_config={
                 "Track": st.column_config.TextColumn(disabled=True),
-                "MH-IR": st.column_config.NumberColumn(min_value=0, step=1),
-                "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
-                "48X-IR": st.column_config.NumberColumn(min_value=0, step=1),
-                "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=1),
-                "KIR": st.column_config.NumberColumn(min_value=0, step=1),
+                "MH-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
+                "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
+                "48X-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
+                "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
+                "KIR": st.column_config.NumberColumn(min_value=0, step=0.5),
                 "Total Blocks": st.column_config.NumberColumn(disabled=True),
             },
             key="class_year_table",
@@ -376,12 +377,23 @@ with tabs[1]:
     updated_req = {}
     for row in edited_df.to_dict("records"):
         track = row["Track"]
-        updated_req[track] = {rot: int(row.get(rot, 0)) for rot in ROTATION_COLUMNS}
+        updated_req[track] = {rot: float(row.get(rot, 0) or 0) for rot in ROTATION_COLUMNS}
 
     cfg["gui"]["class_year_requirements"] = updated_req
     if updated_req != prev_req:
         # Trigger a second rerun so computed cells (e.g., Total Blocks) update immediately.
         st.rerun()
+
+    non_integer_tracks = []
+    for track in CLASS_TRACKS:
+        total_blocks = sum(updated_req[track][rot] for rot in ROTATION_COLUMNS)
+        if not math.isclose(total_blocks, round(total_blocks)):
+            non_integer_tracks.append(f"{track} ({total_blocks})")
+    if non_integer_tracks:
+        st.warning(
+            "Total blocks must be a whole number before solving. "
+            f"Check: {', '.join(non_integer_tracks)}"
+        )
 
     requirements = {}
     for track in CLASS_TRACKS:
@@ -404,12 +416,12 @@ with tabs[1]:
 
     display_df = pd.DataFrame(display_rows, columns=["Track"] + DISPLAY_COLUMNS)
     for col in ROTATION_COLUMNS + ["Total Blocks"]:
-        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").astype("Int64")
+        display_df[col] = pd.to_numeric(display_df[col], errors="coerce")
 
     def _shade_zero(value: int | float | None) -> str:
         if value is None or pd.isna(value):
             return ""
-        if int(value) == 0:
+        if abs(float(value)) < 1e-9:
             return "background-color: #f4f4f4; color: #8a8a8a;"
         return "background-color: #e9f7ef; font-weight: 600;"
 
@@ -730,15 +742,15 @@ with tabs[3]:
                 "Honor On requests",
                 f"{hard_or_pref}. Enforces the On selections from the Requests tab.",
             )
+        if spec.id == "block_total_zero_or_full":
+            return (
+                "Block totals must be 0 or 1.0 FTE",
+                f"{hard_or_pref}. If a resident is scheduled in a block, they must total 1.0 FTE; otherwise 0.",
+            )
         if spec.id == "no_half_non_ir5":
             return (
-                "No half-block assignments (except IR5 split)",
-                f"{hard_or_pref}. Only IR5 can split MH-IR / 48X-IR as 0.5 + 0.5 in a block.",
-            )
-        if spec.id == "ir5_split_coupling":
-            return (
-                "IR5 split must be paired",
-                f"{hard_or_pref}. If an IR5 does 0.5 MH-IR in a block, they must also do 0.5 48X-IR (and vice versa).",
+                "No half-block assignments for DR",
+                f"{hard_or_pref}. DR residents must take full 1.0 FTE rotations within a block.",
             )
         if spec.id == "coverage_48x_ir":
             op = str(spec_params.get("op", "=="))
@@ -1006,7 +1018,7 @@ with tabs[3]:
             p["max_consecutive"] = int(sel)
 
     categories = {
-        "Core Rules": {"one_place", "no_half_non_ir5", "ir5_split_coupling"},
+        "Core Rules": {"one_place", "block_total_zero_or_full", "no_half_non_ir5"},
         "Requests": {"blocked", "forced"},
         "Coverage & Caps": {
             "coverage_48x_ir",
@@ -1112,7 +1124,7 @@ if False:  # Checks tab removed
         mode = str(modes.get(constraint_id, default)).lower()
         if mode not in {"always", "if_able", "disabled"}:
             return default
-        if constraint_id in {"one_place", "no_half_non_ir5", "ir5_split_coupling"} and mode == "if_able":
+        if constraint_id in {"one_place", "block_total_zero_or_full", "no_half_non_ir5"} and mode == "if_able":
             return "always"
         return mode
 
@@ -1365,15 +1377,15 @@ if False:  # Checks tab removed
         for track, row in requirements.items():
             if not isinstance(row, dict):
                 continue
-            total = 0
+            total = 0.0
             for rot in ROTATION_COLUMNS:
                 try:
-                    total += int(row.get(rot, 0))
+                    total += float(row.get(rot, 0))
                 except Exception:
                     continue
             per_track_sum[str(track)] = total
         num_blocks = len(block_labels)
-        too_high = {t: n for t, n in per_track_sum.items() if n > num_blocks}
+        too_high = {t: n for t, n in per_track_sum.items() if n > num_blocks + 1e-6}
         if too_high:
             track, total = next(iter(too_high.items()))
             _add(

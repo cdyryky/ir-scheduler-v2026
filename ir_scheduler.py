@@ -281,15 +281,38 @@ def _parse_requirements(data: dict, num_blocks: int) -> Dict[str, Dict[str, int]
             if rot not in rotations:
                 raise ScheduleError(f"Requirements for {track} missing rotation {rot}.")
             value = rotations[rot]
-            if not isinstance(value, int) or value < 0:
-                raise ScheduleError(
-                    f"Requirements for {track} {rot} must be a non-negative integer."
-                )
-            if value > num_blocks:
+            if track.startswith("IR"):
+                try:
+                    fte_value = float(value)
+                except (TypeError, ValueError):
+                    raise ScheduleError(
+                        f"Requirements for {track} {rot} must be a non-negative number."
+                    )
+                if fte_value < 0:
+                    raise ScheduleError(
+                        f"Requirements for {track} {rot} must be a non-negative number."
+                    )
+                units = int(round(fte_value * 2))
+            else:
+                if not isinstance(value, int):
+                    raise ScheduleError(
+                        f"Requirements for {track} {rot} must be a non-negative integer."
+                    )
+                if value < 0:
+                    raise ScheduleError(
+                        f"Requirements for {track} {rot} must be a non-negative integer."
+                    )
+                units = 2 * value
+            if units > 2 * num_blocks:
                 raise ScheduleError(
                     f"Requirements for {track} {rot} exceed number of blocks ({num_blocks})."
                 )
-            entry[rot] = value
+            entry[rot] = units
+        total_units = sum(entry.values())
+        if total_units % 2 != 0:
+            raise ScheduleError(
+                f"Total blocks for {track} must be a whole number before solving."
+            )
         requirements[track] = entry
     return requirements
 
@@ -506,10 +529,10 @@ def _add_forced(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
 
 def _add_no_half_assignments(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
     for resident in ctx.schedule_input.residents:
-        is_ir5 = resident.track == "IR5"
+        is_dr = resident.track.startswith("DR")
         for b in range(ctx.num_blocks):
             for rot in ROTATIONS:
-                if is_ir5 and rot in {"MH-IR", "48X-IR"}:
+                if not is_dr:
                     continue
                 _enforce(ctx.model.Add(ctx.u[(resident.resident_id, b, rot)] != 1), assumption)
 
@@ -526,6 +549,19 @@ def _add_ir5_split_coupling(ctx: ConstraintContext, assumption: Optional[cp_mode
             _enforce(ctx.model.Add(x48 == 1), assumption).OnlyEnforceIf(is_half_x48)
             _enforce(ctx.model.Add(x48 != 1), assumption).OnlyEnforceIf(is_half_x48.Not())
             _enforce(ctx.model.Add(is_half_mh == is_half_x48), assumption)
+
+
+def _add_block_total_zero_or_full(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    for resident in ctx.schedule_input.residents:
+        for b in range(ctx.num_blocks):
+            total_units = ctx.model.NewIntVar(0, 2, f"total_units_{resident.resident_id}_{b}")
+            _enforce(
+                ctx.model.Add(
+                    total_units == sum(ctx.u[(resident.resident_id, b, rot)] for rot in ROTATIONS)
+                ),
+                assumption,
+            )
+            _enforce(ctx.model.AddAllowedAssignments([total_units], [[0], [2]]), assumption)
 
 
 def _add_coverage_48x_ir(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
@@ -597,8 +633,11 @@ def _add_track_requirements(ctx: ConstraintContext, assumption: Optional[cp_mode
     for resident in ctx.schedule_input.residents:
         req = ctx.schedule_input.requirements[resident.track]
         for rot in ROTATIONS:
-            blocks = req[rot]
-            _enforce(ctx.model.Add(_total_units(ctx.u, resident.resident_id, rot, ctx.num_blocks) == 2 * blocks), assumption)
+            units = req[rot]
+            _enforce(
+                ctx.model.Add(_total_units(ctx.u, resident.resident_id, rot, ctx.num_blocks) == units),
+                assumption,
+            )
 
 
 def _add_ir5_mh_min_per_block(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
@@ -726,6 +765,13 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         add_hard=_add_one_place_at_time,
     ),
     ConstraintSpec(
+        id="block_total_zero_or_full",
+        label="Per-block assignment is 0 or 1.0 FTE",
+        softenable=False,
+        impact=75,
+        add_hard=_add_block_total_zero_or_full,
+    ),
+    ConstraintSpec(
         id="blocked",
         label="Blocked assignments",
         softenable=False,
@@ -741,17 +787,10 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
     ),
     ConstraintSpec(
         id="no_half_non_ir5",
-        label="No half assignments outside IR5 split",
+        label="No half assignments for DR residents",
         softenable=False,
         impact=30,
         add_hard=_add_no_half_assignments,
-    ),
-    ConstraintSpec(
-        id="ir5_split_coupling",
-        label="IR5 MH-IR/48X-IR split coupling",
-        softenable=False,
-        impact=40,
-        add_hard=_add_ir5_split_coupling,
     ),
     ConstraintSpec(
         id="coverage_48x_ir",
@@ -858,7 +897,7 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
 
 SPEC_BY_ID = {spec.id: spec for spec in CONSTRAINT_SPECS}
 
-CORE_RULE_IDS = {"one_place", "no_half_non_ir5", "ir5_split_coupling"}
+CORE_RULE_IDS = {"one_place", "block_total_zero_or_full", "no_half_non_ir5"}
 
 
 def _default_mode_for_spec(spec: ConstraintSpec) -> str:

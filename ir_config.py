@@ -126,10 +126,16 @@ def _normalize_class_year_requirements(value: Any) -> dict:
         defaults = DEFAULT_CLASS_REQUIREMENTS[track]
         for rot in ROTATION_COLUMNS:
             raw = row.get(rot, defaults.get(rot, 0))
-            try:
-                normalized_row[rot] = int(raw)
-            except (TypeError, ValueError):
-                normalized_row[rot] = int(defaults.get(rot, 0))
+            if track in IR_TRACKS:
+                try:
+                    normalized_row[rot] = max(0.0, round(float(raw) * 2) / 2)
+                except (TypeError, ValueError):
+                    normalized_row[rot] = float(defaults.get(rot, 0))
+            else:
+                try:
+                    normalized_row[rot] = int(raw)
+                except (TypeError, ValueError):
+                    normalized_row[rot] = int(defaults.get(rot, 0))
         out[track] = normalized_row
     return out
 
