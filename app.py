@@ -212,79 +212,69 @@ st.markdown(
         align-items: center;
     }
 
-    /* Retro header */
-    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Orbitron:wght@700;900&display=swap');
-    .retro-hero {
+    /* Modern header */
+    .hero {
         position: relative;
-        border-radius: 18px;
-        padding: 1.15rem 1.25rem 1.05rem 1.25rem;
+        border-radius: 16px;
+        padding: 1.15rem 1.35rem;
         margin: 0 0 0.9rem 0;
         background:
-          radial-gradient(1100px 180px at 20% 0%, rgba(255, 232, 102, 0.26), rgba(0,0,0,0) 55%),
-          radial-gradient(900px 220px at 85% 15%, rgba(124, 92, 255, 0.18), rgba(0,0,0,0) 55%),
-          linear-gradient(135deg, rgba(0, 183, 255, 0.12), rgba(255, 46, 167, 0.10)),
-          #0b0f18;
-        border: 1px solid rgba(255,255,255,0.08);
+          radial-gradient(900px 260px at 10% 0%, rgba(59, 130, 246, 0.16), rgba(0,0,0,0) 60%),
+          radial-gradient(900px 260px at 90% 10%, rgba(168, 85, 247, 0.14), rgba(0,0,0,0) 60%),
+          var(--secondary-background-color);
+        border: 1px solid rgba(0,0,0,0.08);
         box-shadow:
-          0 18px 40px rgba(0,0,0,0.18),
-          inset 0 1px 0 rgba(255,255,255,0.06);
+          0 18px 40px rgba(0,0,0,0.10);
         overflow: hidden;
     }
-    .retro-hero:before {
+    @media (prefers-color-scheme: dark) {
+        .hero { border-color: rgba(255,255,255,0.10); }
+    }
+    .hero:before {
         content: "";
         position: absolute;
         inset: 0;
-        background: repeating-linear-gradient(
-          to bottom,
-          rgba(255,255,255,0.06) 0px,
-          rgba(255,255,255,0.06) 1px,
-          rgba(0,0,0,0) 3px,
-          rgba(0,0,0,0) 7px
-        );
-        opacity: 0.16;
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0));
+        opacity: 0.35;
         pointer-events: none;
-        mix-blend-mode: overlay;
     }
-    .retro-row {
+    .hero-row {
         position: relative;
         display: flex;
-        align-items: baseline;
+        align-items: center;
         justify-content: space-between;
         gap: 1rem;
         flex-wrap: wrap;
     }
-    .retro-title {
+    .hero-title {
         position: relative;
         margin: 0;
-        font-family: 'Orbitron', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
-        font-weight: 900;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        font-size: clamp(26px, 3.2vw, 44px);
-        color: #eaf6ff;
-        text-shadow:
-          0 2px 0 rgba(0,0,0,0.25),
-          0 0 18px rgba(0, 183, 255, 0.20),
-          0 0 22px rgba(255, 46, 167, 0.16);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        font-size: clamp(24px, 2.6vw, 40px);
+        line-height: 1.1;
+        color: var(--text-color);
     }
-    .retro-badge {
+    .hero-badge {
         position: relative;
-        font-family: 'Press Start 2P', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 11px;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+        font-size: 12px;
         line-height: 1;
-        color: #0b0f18;
-        padding: 0.55rem 0.7rem;
+        font-weight: 600;
+        color: var(--text-color);
+        padding: 0.45rem 0.65rem;
         border-radius: 999px;
-        background: linear-gradient(90deg, #ffe866, #00b7ff);
-        box-shadow: 0 10px 18px rgba(0,0,0,0.20);
+        background: rgba(59, 130, 246, 0.10);
+        border: 1px solid rgba(59, 130, 246, 0.18);
         white-space: nowrap;
     }
-    .retro-sub {
+    .hero-sub {
         position: relative;
         margin: 0.55rem 0 0 0;
-        color: rgba(234, 246, 255, 0.78);
+        color: var(--text-color);
+        opacity: 0.78;
         font-size: 14px;
-        letter-spacing: 0.02em;
     }
     </style>
     """,
@@ -293,12 +283,12 @@ st.markdown(
 
 st.markdown(
     f"""
-    <div class="retro-hero">
-      <div class="retro-row">
-        <h1 class="retro-title">{APP_TITLE}</h1>
-        <div class="retro-badge">CONFIG MODE</div>
+    <div class="hero">
+      <div class="hero-row">
+        <h1 class="hero-title">{APP_TITLE}</h1>
+        <div class="hero-badge">CONFIG</div>
       </div>
-      <p class="retro-sub">Build residents, set constraints and priorities, then solve and export.</p>
+      <p class="hero-sub">Build residents, set constraints and priorities, then solve and export.</p>
     </div>
     """,
     unsafe_allow_html=True,
