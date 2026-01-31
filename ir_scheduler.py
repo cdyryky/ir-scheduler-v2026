@@ -858,6 +858,8 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
 
 SPEC_BY_ID = {spec.id: spec for spec in CONSTRAINT_SPECS}
 
+CORE_RULE_IDS = {"one_place", "no_half_non_ir5", "ir5_split_coupling"}
+
 
 def _default_mode_for_spec(spec: ConstraintSpec) -> str:
     return "if_able" if spec.softenable else "always"
@@ -876,6 +878,7 @@ def _apply_constraints(
     Dict[str, List[cp_model.IntVar]],
     Dict[int, ConstraintSpec],
     Dict[int, cp_model.BoolVar],
+    List[Tuple[cp_model.IntVar, int]],
 ]:
     groups = _resident_groups(schedule_input.residents)
     ctx = ConstraintContext(
@@ -890,13 +893,26 @@ def _apply_constraints(
     penalties: Dict[str, List[cp_model.IntVar]] = {spec.id: [] for spec in CONSTRAINT_SPECS}
     assumption_index_map: Dict[int, ConstraintSpec] = {}
     assumption_var_map: Dict[int, cp_model.BoolVar] = {}
+    relax_terms: List[Tuple[cp_model.IntVar, int]] = []
 
     for spec in CONSTRAINT_SPECS:
         mode = _constraint_mode(spec, schedule_input.constraint_modes)
+        if mode == "if_able" and spec.id in CORE_RULE_IDS:
+            mode = "always"
         if mode == "disabled":
             continue
         if mode == "if_able" and spec.softenable and spec.add_soft is not None:
             penalties[spec.id] = spec.add_soft(ctx)
+            continue
+        if mode == "if_able":
+            # "Try" mode for hard-only constraints: enforce unless the solver needs to relax it.
+            # We model this by gating the hard constraints with an assumption var that is NOT required,
+            # then minimizing how many such constraints are relaxed.
+            assumption = model.NewBoolVar(f"a_{spec.id}")
+            spec.add_hard(ctx, assumption)
+            relaxed = model.NewBoolVar(f"relax_{spec.id}")
+            model.Add(assumption + relaxed == 1)
+            relax_terms.append((relaxed, 1))
             continue
 
         assumption = model.NewBoolVar(f"a_{spec.id}")
@@ -905,7 +921,7 @@ def _apply_constraints(
         assumption_var_map[assumption.Index()] = assumption
         spec.add_hard(ctx, assumption)
 
-    return penalties, assumption_index_map, assumption_var_map
+    return penalties, assumption_index_map, assumption_var_map, relax_terms
 
 
 def _linear_terms_expr(terms: Iterable[Tuple[cp_model.IntVar, int]]):
@@ -1018,7 +1034,7 @@ def _suggest_relaxations_fast(
     candidates: List[Tuple[ConstraintSpec, str]] = []
     for spec in specs:
         current_mode = _constraint_mode(spec, schedule_input.constraint_modes)
-        mode = "if_able" if spec.softenable else "disabled"
+        mode = "disabled" if spec.id in CORE_RULE_IDS else "if_able"
         if mode != current_mode:
             candidates.append((spec, mode))
 
@@ -1117,9 +1133,28 @@ def solve_schedule(
 ) -> SolveResult:
     model = cp_model.CpModel()
     u, p = _build_variables(model, schedule_input.residents, schedule_input.block_labels)
-    penalties, assumption_index_map, assumption_var_map = _apply_constraints(model, schedule_input, u, p)
+    penalties, assumption_index_map, assumption_var_map, relax_terms = _apply_constraints(model, schedule_input, u, p)
 
     solver = cp_model.CpSolver()
+
+    if relax_terms:
+        status, _ = _optimize_and_fix(model, solver, relax_terms)
+        if status == cp_model.INFEASIBLE:
+            return SolveResult(
+                [],
+                _build_diagnostic(
+                    schedule_input,
+                    model,
+                    solver,
+                    assumption_index_map,
+                    assumption_var_map,
+                    shrink_core=shrink_core,
+                    suggest_relaxations=suggest_relaxations,
+                    progress_cb=progress_cb,
+                ),
+            )
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return SolveResult([], None)
 
     groups = _resident_groups(schedule_input.residents)
     ir5_ids = groups["IR5"]

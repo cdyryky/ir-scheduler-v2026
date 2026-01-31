@@ -834,20 +834,20 @@ with tabs[3]:
         # Fallback
         return (spec.label, f"{hard_or_pref}.")
 
-    def _render_spec_mode(spec, title: str, description: str) -> None:
+    def _render_spec_mode(spec, title: str, description: str, *, allow_try: bool) -> None:
         mode_display = {
             "always": "On (hard)",
             "if_able": "Try (soft)",
             "disabled": "Off",
         }
-        if spec.softenable:
+        if allow_try:
             options = ["always", "if_able", "disabled"]
         else:
             options = ["always", "disabled"]
 
         default_mode = modes.get(spec.id, "if_able" if spec.softenable else "always")
         if default_mode not in options:
-            default_mode = "if_able" if spec.softenable else "always"
+            default_mode = "always"
 
         selection = st.radio(
             title,
@@ -1007,8 +1007,8 @@ with tabs[3]:
             p["max_consecutive"] = int(sel)
 
     categories = {
-        "Requests": {"blocked", "forced"},
         "Core Rules": {"one_place", "no_half_non_ir5", "ir5_split_coupling"},
+        "Requests": {"blocked", "forced"},
         "Coverage & Caps": {
             "coverage_48x_ir",
             "coverage_48x_ctus",
@@ -1032,6 +1032,7 @@ with tabs[3]:
     for tab_name, tab in zip(tab_names, sub_tabs):
         with tab:
             ids = categories.get(tab_name, set())
+            allow_try = tab_name != "Core Rules"
             for spec in CONSTRAINT_SPECS:
                 if tab_name == "Other":
                     if spec.id not in other_ids:
@@ -1042,13 +1043,13 @@ with tabs[3]:
                 if tab_name in {"Coverage & Caps", "Track Rules", "Preferences"}:
                     spec_params = _params_for(spec.id)
                     title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
-                    _render_spec_mode(spec, title=title, description=description)
+                    _render_spec_mode(spec, title=title, description=description, allow_try=allow_try)
                     _render_spec_params(spec, num_blocks=num_blocks)
                     st.divider()
                 else:
                     spec_params = _params_for(spec.id)
                     title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
-                    _render_spec_mode(spec, title=title, description=description)
+                    _render_spec_mode(spec, title=title, description=description, allow_try=allow_try)
 
     cfg["gui"]["constraints"]["modes"] = modes
 
