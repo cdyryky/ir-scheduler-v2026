@@ -33,6 +33,7 @@ class ScheduleInput:
     num_solutions: int
     constraint_modes: Dict[str, str]
     soft_priority: List[str]
+    constraint_params: Dict[str, dict]
     requirements: Dict[str, Dict[str, int]]
 
 
@@ -229,7 +230,7 @@ def _parse_weights(data: dict) -> Dict[str, int]:
     }
 
 
-def _parse_gui_constraints(data: dict) -> Tuple[Dict[str, str], List[str]]:
+def _parse_gui_constraints(data: dict) -> Tuple[Dict[str, str], List[str], Dict[str, dict]]:
     gui = data.get("gui") or {}
     if not isinstance(gui, dict):
         raise ScheduleError("gui must be a mapping when provided.")
@@ -238,11 +239,14 @@ def _parse_gui_constraints(data: dict) -> Tuple[Dict[str, str], List[str]]:
         raise ScheduleError("gui.constraints must be a mapping when provided.")
     modes = constraints.get("modes") or {}
     soft_priority = constraints.get("soft_priority") or []
+    params = constraints.get("params") or {}
 
     if not isinstance(modes, dict):
         raise ScheduleError("gui.constraints.modes must be a mapping when provided.")
     if not isinstance(soft_priority, list):
         raise ScheduleError("gui.constraints.soft_priority must be a list when provided.")
+    if not isinstance(params, dict):
+        raise ScheduleError("gui.constraints.params must be a mapping when provided.")
 
     normalized_modes: Dict[str, str] = {}
     for key, value in modes.items():
@@ -251,7 +255,11 @@ def _parse_gui_constraints(data: dict) -> Tuple[Dict[str, str], List[str]]:
             raise ScheduleError(f"Unknown constraint mode for {key}: {value}")
         normalized_modes[str(key)] = mode
 
-    return normalized_modes, [str(item) for item in soft_priority]
+    normalized_params: Dict[str, dict] = {}
+    for key, value in params.items():
+        normalized_params[str(key)] = value if isinstance(value, dict) else {}
+
+    return normalized_modes, [str(item) for item in soft_priority], normalized_params
 
 
 def _parse_requirements(data: dict, num_blocks: int) -> Dict[str, Dict[str, int]]:
@@ -306,7 +314,7 @@ def load_schedule_input_from_data(data: dict) -> ScheduleInput:
             )
     weights = _parse_weights(data)
     num_solutions = int(data.get("num_solutions", 1))
-    constraint_modes, soft_priority = _parse_gui_constraints(data)
+    constraint_modes, soft_priority, constraint_params = _parse_gui_constraints(data)
     requirements = _parse_requirements(data, len(block_labels))
     return ScheduleInput(
         block_labels=block_labels,
@@ -317,6 +325,7 @@ def load_schedule_input_from_data(data: dict) -> ScheduleInput:
         num_solutions=num_solutions,
         constraint_modes=constraint_modes,
         soft_priority=soft_priority,
+        constraint_params=constraint_params,
         requirements=requirements,
     )
 
@@ -425,6 +434,42 @@ class ConstraintContext:
         self._first_timer = first_timer
         return first_timer
 
+    def constraint_param(self, spec_id: str, key: str, default):
+        params = self.schedule_input.constraint_params.get(spec_id, {})
+        if not isinstance(params, dict):
+            return default
+        return params.get(key, default)
+
+
+def _coerce_int(value, default: int, *, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+    try:
+        out = int(value)
+    except (TypeError, ValueError):
+        out = int(default)
+    if min_value is not None:
+        out = max(int(min_value), out)
+    if max_value is not None:
+        out = min(int(max_value), out)
+    return out
+
+
+def _coerce_units(value, default_units: int, *, min_units: int = 0, max_units: int = 9999) -> int:
+    # Units are half-FTE integers: 1 unit = 0.5 FTE.
+    if isinstance(value, int):
+        units = value
+    elif isinstance(value, float):
+        units = int(round(value * 2))
+    else:
+        try:
+            units = int(value)
+        except (TypeError, ValueError):
+            try:
+                units = int(round(float(value) * 2))
+            except (TypeError, ValueError):
+                units = default_units
+    units = max(min_units, min(max_units, int(units)))
+    return units
+
 
 @dataclass(frozen=True)
 class ConstraintSpec:
@@ -484,47 +529,66 @@ def _add_ir5_split_coupling(ctx: ConstraintContext, assumption: Optional[cp_mode
 
 
 def _add_coverage_48x_ir(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    op = str(ctx.constraint_param("coverage_48x_ir", "op", "==")).strip()
+    target_units = _coerce_units(ctx.constraint_param("coverage_48x_ir", "target_units", 2), 2)
+    # Coverage targets are whole-number FTE, represented in half-FTE units.
+    target_units = 2 * int(round(target_units / 2))
     for b in range(ctx.num_blocks):
-        _enforce(
-            ctx.model.Add(sum(ctx.u[(resident.resident_id, b, "48X-IR")] for resident in ctx.schedule_input.residents)
-                          == 2),
-            assumption,
-        )
+        total = sum(ctx.u[(resident.resident_id, b, "48X-IR")] for resident in ctx.schedule_input.residents)
+        if op == "<=":
+            _enforce(ctx.model.Add(total <= target_units), assumption)
+        elif op == ">=":
+            _enforce(ctx.model.Add(total >= target_units), assumption)
+        else:
+            _enforce(ctx.model.Add(total == target_units), assumption)
 
 
 def _add_coverage_48x_ctus(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    op = str(ctx.constraint_param("coverage_48x_ctus", "op", "==")).strip()
+    target_units = _coerce_units(ctx.constraint_param("coverage_48x_ctus", "target_units", 2), 2)
+    # Coverage targets are whole-number FTE, represented in half-FTE units.
+    target_units = 2 * int(round(target_units / 2))
     for b in range(ctx.num_blocks):
-        _enforce(
-            ctx.model.Add(
-                sum(ctx.u[(resident.resident_id, b, "48X-CT/US")] for resident in ctx.schedule_input.residents)
-                == 2
-            ),
-            assumption,
-        )
+        total = sum(ctx.u[(resident.resident_id, b, "48X-CT/US")] for resident in ctx.schedule_input.residents)
+        if op == "<=":
+            _enforce(ctx.model.Add(total <= target_units), assumption)
+        elif op == ">=":
+            _enforce(ctx.model.Add(total >= target_units), assumption)
+        else:
+            _enforce(ctx.model.Add(total == target_units), assumption)
 
 
 def _add_mh_total_minmax(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    min_fte = _coerce_int(ctx.constraint_param("mh_total_minmax", "min_fte", 3), 3, min_value=0)
+    max_fte = _coerce_int(ctx.constraint_param("mh_total_minmax", "max_fte", 4), 4, min_value=0)
+    if min_fte > max_fte:
+        min_fte, max_fte = max_fte, min_fte
     for b in range(ctx.num_blocks):
         mh_total = sum(ctx.u[(resident.resident_id, b, "MH-IR")] for resident in ctx.schedule_input.residents) + sum(
             ctx.u[(resident.resident_id, b, "MH-CT/US")] for resident in ctx.schedule_input.residents
         )
-        _enforce(ctx.model.Add(mh_total >= 6), assumption)
-        _enforce(ctx.model.Add(mh_total <= 8), assumption)
+        _enforce(ctx.model.Add(mh_total >= 2 * min_fte), assumption)
+        _enforce(ctx.model.Add(mh_total <= 2 * max_fte), assumption)
 
 
 def _add_mh_ctus_cap(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    max_fte = _coerce_int(ctx.constraint_param("mh_ctus_cap", "max_fte", 1), 1, min_value=0)
     for b in range(ctx.num_blocks):
         _enforce(
             ctx.model.Add(sum(ctx.u[(resident.resident_id, b, "MH-CT/US")] for resident in ctx.schedule_input.residents)
-                          <= 2),
+                          <= 2 * max_fte),
             assumption,
         )
 
 
 def _add_kir_cap(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    max_fte = _coerce_int(ctx.constraint_param("kir_cap", "max_fte", 2), 2, min_value=0)
     for b in range(ctx.num_blocks):
         _enforce(
-            ctx.model.Add(sum(ctx.u[(resident.resident_id, b, "KIR")] for resident in ctx.schedule_input.residents) <= 4),
+            ctx.model.Add(
+                sum(ctx.u[(resident.resident_id, b, "KIR")] for resident in ctx.schedule_input.residents)
+                <= 2 * max_fte
+            ),
             assumption,
         )
 
@@ -545,26 +609,40 @@ def _add_ir5_mh_min_per_block(ctx: ConstraintContext, assumption: Optional[cp_mo
 
 
 def _add_ir4_plus_mh_cap(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    ir_min_year = _coerce_int(ctx.constraint_param("ir4_plus_mh_cap", "ir_min_year", 4), 4, min_value=1, max_value=5)
+    max_fte = _coerce_int(ctx.constraint_param("ir4_plus_mh_cap", "max_fte", 2), 2, min_value=0)
+    group: List[str] = []
+    for resident in ctx.schedule_input.residents:
+        if not isinstance(resident.track, str) or not resident.track.startswith("IR"):
+            continue
+        try:
+            year = int(resident.track[2:])
+        except ValueError:
+            continue
+        if year >= ir_min_year:
+            group.append(resident.resident_id)
     for b in range(ctx.num_blocks):
         _enforce(
-            ctx.model.Add(sum(ctx.u[(resident_id, b, "MH-IR")] for resident_id in ctx.groups["IR4_PLUS"]) <= 4),
+            ctx.model.Add(sum(ctx.u[(resident_id, b, "MH-IR")] for resident_id in group) <= 2 * max_fte),
             assumption,
         )
 
 
 def _add_dr1_early_block_mh_prohibited(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    max_block = min(4, ctx.num_blocks)
+    max_block = _coerce_int(ctx.constraint_param("dr1_early_block", "first_n_blocks", 4), 4, min_value=0)
+    max_block = min(max_block, ctx.num_blocks)
     for resident_id in ctx.groups["DR1"]:
         for b in range(max_block):
             _enforce(ctx.model.Add(ctx.u[(resident_id, b, "MH-IR")] == 0), assumption)
 
 
 def _add_ir3_late_block_restrictions(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    if ctx.num_blocks >= 13:
-        for resident_id in ctx.groups["IR3"]:
-            for b in range(7, min(13, ctx.num_blocks)):
-                _enforce(ctx.model.Add(ctx.u[(resident_id, b, "MH-IR")] == 0), assumption)
-                _enforce(ctx.model.Add(ctx.u[(resident_id, b, "48X-IR")] == 0), assumption)
+    after_block = _coerce_int(ctx.constraint_param("ir3_late_block", "after_block", 7), 7, min_value=0)
+    start_b = min(after_block, ctx.num_blocks)
+    for resident_id in ctx.groups["IR3"]:
+        for b in range(start_b, ctx.num_blocks):
+            _enforce(ctx.model.Add(ctx.u[(resident_id, b, "MH-IR")] == 0), assumption)
+            _enforce(ctx.model.Add(ctx.u[(resident_id, b, "48X-IR")] == 0), assumption)
 
 
 def _add_first_timer_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
@@ -586,25 +664,27 @@ def _add_first_timer_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
 
 
 def _add_consec_full_mh_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    max_consecutive = _coerce_int(
+        ctx.constraint_param("consec_full_mh", "max_consecutive", 3), 3, min_value=2, max_value=ctx.num_blocks
+    )
     full_mh = ctx.full_mh()
     for resident in ctx.schedule_input.residents:
-        for b in range(0, ctx.num_blocks - 2):
-            window = full_mh[(resident.resident_id, b)]
-            window += full_mh[(resident.resident_id, b + 1)]
-            window += full_mh[(resident.resident_id, b + 2)]
-            _enforce(ctx.model.Add(window <= 2), assumption)
+        for b in range(0, ctx.num_blocks - (max_consecutive - 1)):
+            window = sum(full_mh[(resident.resident_id, b + k)] for k in range(max_consecutive))
+            _enforce(ctx.model.Add(window <= max_consecutive - 1), assumption)
 
 
 def _add_consec_full_mh_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
+    max_consecutive = _coerce_int(
+        ctx.constraint_param("consec_full_mh", "max_consecutive", 3), 3, min_value=2, max_value=ctx.num_blocks
+    )
     full_mh = ctx.full_mh()
     excess_vars: List[cp_model.IntVar] = []
     for resident in ctx.schedule_input.residents:
-        for b in range(0, ctx.num_blocks - 2):
-            window = full_mh[(resident.resident_id, b)]
-            window += full_mh[(resident.resident_id, b + 1)]
-            window += full_mh[(resident.resident_id, b + 2)]
-            excess = ctx.model.NewIntVar(0, 1, f"mh3_excess_{resident.resident_id}_{b}")
-            ctx.model.Add(window <= 2 + excess)
+        for b in range(0, ctx.num_blocks - (max_consecutive - 1)):
+            window = sum(full_mh[(resident.resident_id, b + k)] for k in range(max_consecutive))
+            excess = ctx.model.NewIntVar(0, 1, f"mh_consec_excess_{resident.resident_id}_{b}")
+            ctx.model.Add(window <= (max_consecutive - 1) + excess)
             excess_vars.append(excess)
     return excess_vars
 
@@ -675,42 +755,42 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
     ),
     ConstraintSpec(
         id="coverage_48x_ir",
-        label="48X-IR coverage == 1.0 FTE",
+        label="48X-IR coverage",
         softenable=False,
         impact=100,
         add_hard=_add_coverage_48x_ir,
     ),
     ConstraintSpec(
         id="coverage_48x_ctus",
-        label="48X-CT/US coverage == 1.0 FTE",
+        label="48X-CT/US coverage",
         softenable=False,
         impact=100,
         add_hard=_add_coverage_48x_ctus,
     ),
     ConstraintSpec(
         id="mh_total_minmax",
-        label="MH total coverage between 3.0 and 4.0 FTE",
+        label="MH total coverage range",
         softenable=False,
         impact=90,
         add_hard=_add_mh_total_minmax,
     ),
     ConstraintSpec(
         id="mh_ctus_cap",
-        label="MH-CT/US cap <= 1.0 FTE",
+        label="MH-CT/US cap",
         softenable=False,
         impact=50,
         add_hard=_add_mh_ctus_cap,
     ),
     ConstraintSpec(
         id="kir_cap",
-        label="KIR cap <= 2.0 FTE",
+        label="KIR cap",
         softenable=False,
         impact=50,
         add_hard=_add_kir_cap,
     ),
     ConstraintSpec(
         id="track_requirements",
-        label="Per-track rotation requirements",
+        label="Per-class (IR/DR) rotation requirements",
         softenable=False,
         impact=90,
         add_hard=_add_track_requirements,
@@ -724,21 +804,21 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
     ),
     ConstraintSpec(
         id="ir4_plus_mh_cap",
-        label="IR4+ MH-IR max 2.0 FTE per block",
+        label="Limit senior residents on MH-IR per block",
         softenable=False,
         impact=60,
         add_hard=_add_ir4_plus_mh_cap,
     ),
     ConstraintSpec(
         id="dr1_early_block",
-        label="DR1 no MH-IR in first four blocks",
+        label="DR1 no MH-IR in early blocks",
         softenable=False,
         impact=15,
         add_hard=_add_dr1_early_block_mh_prohibited,
     ),
     ConstraintSpec(
         id="ir3_late_block",
-        label="IR3 no MH-IR or 48X-IR in blocks 8-13",
+        label="IR3 no MH-IR or 48X-IR in late blocks",
         softenable=False,
         impact=15,
         add_hard=_add_ir3_late_block_restrictions,
@@ -755,7 +835,7 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
     ),
     ConstraintSpec(
         id="consec_full_mh",
-        label="Avoid 3 full MH-IR blocks in any 3-block window",
+        label="Avoid consecutive full MH-IR blocks",
         softenable=True,
         impact=25,
         add_hard=_add_consec_full_mh_hard,
@@ -914,6 +994,7 @@ def _with_constraint_modes(schedule_input: ScheduleInput, overrides: Dict[str, s
         num_solutions=schedule_input.num_solutions,
         constraint_modes=modes,
         soft_priority=schedule_input.soft_priority,
+        constraint_params=schedule_input.constraint_params,
         requirements=schedule_input.requirements,
     )
 

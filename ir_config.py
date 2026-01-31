@@ -52,7 +52,21 @@ def default_config() -> dict:
             "class_year_requirements": {
                 track: dict(DEFAULT_CLASS_REQUIREMENTS[track]) for track in CLASS_TRACKS
             },
-            "constraints": {"modes": {}, "soft_priority": []},
+            "constraints": {
+                "modes": {},
+                "soft_priority": [],
+                "params": {
+                    "coverage_48x_ir": {"op": "==", "target_units": 2},
+                    "coverage_48x_ctus": {"op": "==", "target_units": 2},
+                    "mh_total_minmax": {"min_fte": 3, "max_fte": 4},
+                    "mh_ctus_cap": {"max_fte": 1},
+                    "kir_cap": {"max_fte": 2},
+                    "ir4_plus_mh_cap": {"ir_min_year": 4, "max_fte": 2},
+                    "dr1_early_block": {"first_n_blocks": 4},
+                    "ir3_late_block": {"after_block": 7},
+                    "consec_full_mh": {"max_consecutive": 3},
+                },
+            },
         },
     }
 
@@ -153,6 +167,9 @@ def normalize_config(cfg: Any) -> Tuple[dict, bool]:
         gui["constraints"] = gui_constraints
     gui_constraints.setdefault("modes", {})
     gui_constraints.setdefault("soft_priority", [])
+    gui_constraints.setdefault("params", {})
+    if not isinstance(gui_constraints.get("params"), dict):
+        gui_constraints["params"] = {}
 
     # Ensure GUI requirements exist (used for the editable table), even if YAML only has solver-level requirements.
     if "class_year_requirements" not in gui:

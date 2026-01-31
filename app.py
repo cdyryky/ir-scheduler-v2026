@@ -704,12 +704,141 @@ with tabs[2]:
 
 
 with tabs[3]:
-    st.subheader("Constraint modes")
+    st.subheader("Constraints")
     modes = cfg["gui"]["constraints"].get("modes", {})
     if not isinstance(modes, dict):
         modes = {}
+    params = cfg["gui"]["constraints"].get("params", {})
+    if not isinstance(params, dict):
+        params = {}
+    cfg["gui"]["constraints"]["params"] = params
 
-    def _render_spec_mode(spec) -> None:
+    def _constraint_title_and_description(spec, spec_params: dict, num_blocks: int) -> tuple[str, str]:
+        hard_or_pref = "Preference" if spec.softenable else "Hard constraint"
+        if spec.id == "one_place":
+            return (
+                "One rotation per resident per block",
+                f"{hard_or_pref}. Prevents a resident from being scheduled in multiple places in the same block.",
+            )
+        if spec.id == "blocked":
+            return (
+                "Honor Off requests",
+                f"{hard_or_pref}. Enforces the Off selections from the Requests tab.",
+            )
+        if spec.id == "forced":
+            return (
+                "Honor On requests",
+                f"{hard_or_pref}. Enforces the On selections from the Requests tab.",
+            )
+        if spec.id == "no_half_non_ir5":
+            return (
+                "No half-block assignments (except IR5 split)",
+                f"{hard_or_pref}. Only IR5 can split MH-IR / 48X-IR as 0.5 + 0.5 in a block.",
+            )
+        if spec.id == "ir5_split_coupling":
+            return (
+                "IR5 split must be paired",
+                f"{hard_or_pref}. If an IR5 does 0.5 MH-IR in a block, they must also do 0.5 48X-IR (and vice versa).",
+            )
+        if spec.id == "coverage_48x_ir":
+            op = str(spec_params.get("op", "=="))
+            target_units = spec_params.get("target_units", 2)
+            try:
+                target_fte = int(round(int(target_units) / 2))
+            except Exception:
+                target_fte = 1
+            op_text = {"<=": "at most", "==": "exactly", ">=": "at least"}.get(op, "exactly")
+            return (
+                "48X-IR coverage per block",
+                f"{hard_or_pref}. Requires {op_text} {target_fte}.0 FTE of 48X-IR each block.",
+            )
+        if spec.id == "coverage_48x_ctus":
+            op = str(spec_params.get("op", "=="))
+            target_units = spec_params.get("target_units", 2)
+            try:
+                target_fte = int(round(int(target_units) / 2))
+            except Exception:
+                target_fte = 1
+            op_text = {"<=": "at most", "==": "exactly", ">=": "at least"}.get(op, "exactly")
+            return (
+                "48X-CT/US coverage per block",
+                f"{hard_or_pref}. Requires {op_text} {target_fte}.0 FTE of 48X-CT/US each block.",
+            )
+        if spec.id == "mh_total_minmax":
+            min_fte = spec_params.get("min_fte", 3)
+            max_fte = spec_params.get("max_fte", 4)
+            return (
+                "MH total coverage per block",
+                f"{hard_or_pref}. Combined MH-IR + MH-CT/US must be between {min_fte}.0 and {max_fte}.0 FTE per block.",
+            )
+        if spec.id == "mh_ctus_cap":
+            max_fte = spec_params.get("max_fte", 1)
+            return (
+                "MH-CT/US cap per block",
+                f"{hard_or_pref}. Limits MH-CT/US to at most {max_fte}.0 FTE per block.",
+            )
+        if spec.id == "kir_cap":
+            max_fte = spec_params.get("max_fte", 2)
+            return (
+                "KIR cap per block",
+                f"{hard_or_pref}. Limits KIR to at most {max_fte}.0 FTE per block.",
+            )
+        if spec.id == "track_requirements":
+            return (
+                "Per-class rotation totals",
+                f"{hard_or_pref}. Uses the Class/Year Assignments tab to enforce total blocks per resident (IR/DR class).",
+            )
+        if spec.id == "ir5_mh_min_per_block":
+            return (
+                "IR5 MH-IR minimum per block",
+                f"{hard_or_pref}. Ensures at least 1.0 FTE of IR5 MH-IR coverage per block.",
+            )
+        if spec.id == "ir4_plus_mh_cap":
+            ir_min_year = spec_params.get("ir_min_year", 4)
+            max_fte = spec_params.get("max_fte", 2)
+            return (
+                "Limit senior residents on MH-IR per block",
+                f"{hard_or_pref}. 'Senior' means IR{ir_min_year}+; cap is {max_fte}.0 FTE per block.",
+            )
+        if spec.id == "dr1_early_block":
+            first_n = spec_params.get("first_n_blocks", 4)
+            return (
+                "Keep DR1 off MH-IR early",
+                f"{hard_or_pref}. DR1 cannot do MH-IR in the first {first_n} block(s).",
+            )
+        if spec.id == "ir3_late_block":
+            after_block = spec_params.get("after_block", 7)
+            after_label = f"B{after_block}" if after_block <= num_blocks else "the end"
+            return (
+                "Keep IR3 off MH-IR / 48X-IR late",
+                f"{hard_or_pref}. Starting at {after_label}, IR3 cannot do MH-IR or 48X-IR.",
+            )
+        if spec.id == "first_timer":
+            return (
+                "First-timer MH-IR limit",
+                f"{hard_or_pref}. Limits first-time MH-IR residents (DR1/IR1) to 1 per block.",
+            )
+        if spec.id == "consec_full_mh":
+            max_consecutive = spec_params.get("max_consecutive", 3)
+            return (
+                "Avoid consecutive full MH-IR blocks",
+                f"{hard_or_pref}. Prevents (or discourages) runs of {max_consecutive} full MH-IR blocks in a row.",
+            )
+        if spec.id == "no_sequential_year1_3":
+            return (
+                "No back-to-back blocks for years 1–3",
+                f"{hard_or_pref}. Prevents residents in years 1–3 (DR1–3, IR1–3) from being scheduled in consecutive blocks.",
+            )
+
+        # Fallback
+        return (spec.label, f"{hard_or_pref}.")
+
+    def _render_spec_mode(spec, title: str, description: str) -> None:
+        mode_display = {
+            "always": "On (hard)",
+            "if_able": "Try (soft)",
+            "disabled": "Off",
+        }
         if spec.softenable:
             options = ["always", "if_able", "disabled"]
         else:
@@ -720,13 +849,161 @@ with tabs[3]:
             default_mode = "if_able" if spec.softenable else "always"
 
         selection = st.radio(
-            _spec_label(spec),
+            title,
             options=options,
+            format_func=lambda v: mode_display.get(v, v),
             horizontal=True,
             index=options.index(default_mode),
             key=f"mode_{spec.id}",
         )
         modes[spec.id] = selection
+        st.caption(description)
+
+    def _params_for(spec_id: str) -> dict:
+        raw = params.get(spec_id)
+        if not isinstance(raw, dict):
+            raw = {}
+            params[spec_id] = raw
+        return raw
+
+    def _render_spec_params(spec, num_blocks: int) -> None:
+        if spec.id == "coverage_48x_ir" or spec.id == "coverage_48x_ctus":
+            p = _params_for(spec.id)
+            op = str(p.get("op", "=="))
+            if op not in {"<=", "==", ">="}:
+                op = "=="
+            target_units = p.get("target_units", 2)
+            if not isinstance(target_units, int) or target_units < 0:
+                target_units = 2
+
+            c1, c2 = st.columns([1.3, 2.0])
+            op_sel = c1.selectbox(
+                "Inequality",
+                options=["<=", "==", ">="],
+                index=["<=", "==", ">="].index(op),
+                format_func={"<=": "≤", "==": "Exactly", ">=": "≥"}.get,
+                key=f"cparam_{spec.id}_op",
+            )
+            fte_options = list(range(0, 6))  # whole-number FTE only
+            current_fte = int(round(target_units / 2))
+            current_fte = max(0, min(current_fte, fte_options[-1]))
+            target_fte_sel = c2.selectbox(
+                "Target (FTE)",
+                options=fte_options,
+                index=fte_options.index(current_fte),
+                key=f"cparam_{spec.id}_target_units",
+            )
+            p["op"] = op_sel
+            p["target_units"] = int(target_fte_sel) * 2
+
+        elif spec.id == "mh_total_minmax":
+            p = _params_for(spec.id)
+            min_fte = p.get("min_fte", 3)
+            max_fte = p.get("max_fte", 4)
+            if not isinstance(min_fte, int) or min_fte < 0:
+                min_fte = 3
+            if not isinstance(max_fte, int) or max_fte < 0:
+                max_fte = 4
+
+            fte_options = list(range(0, 11))
+            c1, c2 = st.columns(2)
+            min_sel = c1.selectbox(
+                "Min (FTE)",
+                options=fte_options,
+                index=fte_options.index(min_fte) if min_fte in fte_options else fte_options.index(3),
+                key="cparam_mh_total_minmax_min_fte",
+            )
+            max_sel = c2.selectbox(
+                "Max (FTE)",
+                options=fte_options,
+                index=fte_options.index(max_fte) if max_fte in fte_options else fte_options.index(4),
+                key="cparam_mh_total_minmax_max_fte",
+            )
+            p["min_fte"] = int(min_sel)
+            p["max_fte"] = int(max_sel)
+
+        elif spec.id == "mh_ctus_cap" or spec.id == "kir_cap":
+            p = _params_for(spec.id)
+            max_fte = p.get("max_fte", 1 if spec.id == "mh_ctus_cap" else 2)
+            if not isinstance(max_fte, int) or max_fte < 0:
+                max_fte = 1 if spec.id == "mh_ctus_cap" else 2
+            options = list(range(0, 6))
+            fallback = 1 if spec.id == "mh_ctus_cap" else 2
+            max_sel = st.selectbox(
+                "Max per block (FTE)",
+                options=options,
+                index=options.index(max_fte) if max_fte in options else options.index(fallback),
+                key=f"cparam_{spec.id}_max_fte",
+            )
+            p["max_fte"] = int(max_sel)
+
+        elif spec.id == "ir4_plus_mh_cap":
+            p = _params_for(spec.id)
+            ir_min_year = p.get("ir_min_year", 4)
+            max_fte = p.get("max_fte", 2)
+            if not isinstance(ir_min_year, int) or ir_min_year < 1 or ir_min_year > 5:
+                ir_min_year = 4
+            if not isinstance(max_fte, int) or max_fte < 0:
+                max_fte = 2
+            c1, c2 = st.columns([1.3, 2.0])
+            ir_sel = c1.selectbox(
+                "IR year+",
+                options=[1, 2, 3, 4, 5],
+                index=[1, 2, 3, 4, 5].index(ir_min_year),
+                key="cparam_ir4_plus_mh_cap_ir_min_year",
+            )
+            max_sel = c2.selectbox(
+                "Max per block (FTE)",
+                options=list(range(0, 6)),
+                index=list(range(0, 6)).index(max_fte) if max_fte in range(0, 6) else 2,
+                key="cparam_ir4_plus_mh_cap_max_fte",
+            )
+            p["ir_min_year"] = int(ir_sel)
+            p["max_fte"] = int(max_sel)
+
+        elif spec.id == "dr1_early_block":
+            p = _params_for(spec.id)
+            first_n = p.get("first_n_blocks", 4)
+            if not isinstance(first_n, int) or first_n < 0:
+                first_n = 4
+            options = list(range(0, num_blocks + 1))
+            sel = st.selectbox(
+                "First N blocks",
+                options=options,
+                index=options.index(first_n) if first_n in options else options.index(min(4, num_blocks)),
+                key="cparam_dr1_early_block_first_n_blocks",
+            )
+            p["first_n_blocks"] = int(sel)
+
+        elif spec.id == "ir3_late_block":
+            p = _params_for(spec.id)
+            after_block = p.get("after_block", 7)
+            if not isinstance(after_block, int) or after_block < 0:
+                after_block = 7
+            options = list(range(0, num_blocks + 1))
+            sel = st.selectbox(
+                "After block #",
+                options=options,
+                index=options.index(after_block) if after_block in options else options.index(min(7, num_blocks)),
+                help="Restrictions apply starting at the next block (e.g., 7 means starting at block 8).",
+                key="cparam_ir3_late_block_after_block",
+            )
+            p["after_block"] = int(sel)
+
+        elif spec.id == "consec_full_mh":
+            p = _params_for(spec.id)
+            max_consecutive = p.get("max_consecutive", 3)
+            if not isinstance(max_consecutive, int) or max_consecutive < 2:
+                max_consecutive = 3
+            upper = max(2, min(num_blocks, 8))
+            options = list(range(2, upper + 1))
+            sel = st.selectbox(
+                "Avoid N full MH-IR blocks in a row",
+                options=options,
+                index=options.index(max_consecutive) if max_consecutive in options else options.index(min(3, upper)),
+                key="cparam_consec_full_mh_max_consecutive",
+            )
+            p["max_consecutive"] = int(sel)
 
     categories = {
         "Requests": {"blocked", "forced"},
@@ -750,6 +1027,7 @@ with tabs[3]:
     tab_names = list(categories.keys()) + (["Other"] if other_ids else [])
     sub_tabs = st.tabs(tab_names)
 
+    num_blocks = _num_blocks(cfg)
     for tab_name, tab in zip(tab_names, sub_tabs):
         with tab:
             ids = categories.get(tab_name, set())
@@ -760,7 +1038,16 @@ with tabs[3]:
                 else:
                     if spec.id not in ids:
                         continue
-                _render_spec_mode(spec)
+                if tab_name in {"Coverage & Caps", "Track Rules", "Preferences"}:
+                    spec_params = _params_for(spec.id)
+                    title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                    _render_spec_mode(spec, title=title, description=description)
+                    _render_spec_params(spec, num_blocks=num_blocks)
+                    st.divider()
+                else:
+                    spec_params = _params_for(spec.id)
+                    title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                    _render_spec_mode(spec, title=title, description=description)
 
     cfg["gui"]["constraints"]["modes"] = modes
 
@@ -904,6 +1191,7 @@ with tabs[6]:
             "ir_",
             "dr_",
             "requests_",
+            "cparam_",
             "mode_",
             "prio_",
             "class_year_table",
