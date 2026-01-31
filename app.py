@@ -38,6 +38,127 @@ def _ensure_cfg_state():
         st.session_state["infer_ok"] = ok
 
 
+def _block_labels(cfg: dict) -> list[str]:
+    blocks = cfg.get("blocks")
+    if isinstance(blocks, int):
+        return [f"B{idx}" for idx in range(blocks)]
+    if isinstance(blocks, list):
+        return [str(b) for b in blocks]
+    num_blocks = cfg.get("num_blocks")
+    if isinstance(num_blocks, int):
+        return [f"B{idx}" for idx in range(num_blocks)]
+    return []
+
+
+def _ir_resident_rows(cfg: dict) -> list[dict]:
+    gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else {}
+    residents = gui.get("residents") if isinstance(gui.get("residents"), dict) else {}
+    ir_section = residents.get("IR") if isinstance(residents.get("IR"), dict) else {}
+
+    rows: list[dict] = []
+    for track in IR_TRACKS:
+        names = ir_section.get(track, [])
+        if not isinstance(names, list):
+            continue
+        for name in names:
+            if not isinstance(name, str) or not name.strip():
+                continue
+            rows.append({"Track": track, "Resident": name.strip()})
+
+    track_order = {t: idx for idx, t in enumerate(IR_TRACKS)}
+    rows.sort(key=lambda r: (track_order.get(r["Track"], 999), r["Resident"].casefold()))
+    return rows
+
+
+def _parse_block_label(block, block_labels: list[str]) -> Optional[str]:
+    if isinstance(block, int):
+        if 0 <= block < len(block_labels):
+            return block_labels[block]
+        return None
+    if isinstance(block, str):
+        if block in block_labels:
+            return block
+        return None
+    return None
+
+
+def _blocked_set(cfg: dict, block_labels: list[str]) -> set[tuple[str, str, str]]:
+    out: set[tuple[str, str, str]] = set()
+    raw = cfg.get("blocked", [])
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            resident = entry.get("resident")
+            rotation = entry.get("rotation")
+            block_label = _parse_block_label(entry.get("block"), block_labels)
+            if resident and rotation and block_label:
+                out.add((str(resident), str(block_label), str(rotation)))
+    elif isinstance(raw, dict):
+        for resident, blocks in raw.items():
+            if not isinstance(blocks, dict):
+                continue
+            for block_key, rotations in blocks.items():
+                block_label = _parse_block_label(block_key, block_labels)
+                if not block_label or not isinstance(rotations, list):
+                    continue
+                for rotation in rotations:
+                    if rotation:
+                        out.add((str(resident), str(block_label), str(rotation)))
+    return out
+
+
+def _forced_set(cfg: dict, block_labels: list[str]) -> set[tuple[str, str, str]]:
+    out: set[tuple[str, str, str]] = set()
+    raw = cfg.get("forced", {})
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            resident = entry.get("resident")
+            rotation = entry.get("rotation")
+            block_label = _parse_block_label(entry.get("block"), block_labels)
+            if resident and rotation and block_label:
+                out.add((str(resident), str(block_label), str(rotation)))
+    elif isinstance(raw, dict):
+        for resident, blocks in raw.items():
+            if not isinstance(blocks, dict):
+                continue
+            for block_key, rotation in blocks.items():
+                block_label = _parse_block_label(block_key, block_labels)
+                if not block_label:
+                    continue
+                if isinstance(rotation, list):
+                    if len(rotation) != 1:
+                        continue
+                    rotation = rotation[0]
+                if rotation:
+                    out.add((str(resident), str(block_label), str(rotation)))
+    return out
+
+
+def _blocked_dict(blocked: set[tuple[str, str, str]]) -> dict:
+    out: dict = {}
+    rot_order = {r: idx for idx, r in enumerate(ROTATION_COLUMNS)}
+    for resident, block, rotation in blocked:
+        out.setdefault(resident, {}).setdefault(block, []).append(rotation)
+    for resident, blocks in out.items():
+        for block, rotations in blocks.items():
+            blocks[block] = sorted(set(rotations), key=lambda r: rot_order.get(r, 999))
+    return out
+
+
+def _forced_dict(forced: set[tuple[str, str, str]]) -> dict:
+    out: dict = {}
+    for resident, block, rotation in forced:
+        out.setdefault(resident, {})[block] = rotation
+    return out
+
+
+def _keyify(value: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in str(value))
+
+
 def _sync_residents(cfg: dict) -> Optional[str]:
     try:
         cfg["residents"] = expand_residents(cfg["gui"]["residents"])
@@ -197,6 +318,7 @@ tabs = st.tabs(
     [
         "Residents",
         "Class/Year Assignments",
+        "Requests",
         "Constraints",
         "Prioritization",
         "Solve",
@@ -421,6 +543,142 @@ with tabs[1]:
     )
 
 with tabs[2]:
+    st.subheader("Requests")
+    st.caption(
+        "Use Off to forbid assignments. Use On to force a specific assignment. "
+        "Both are hard constraints and may make the model infeasible."
+    )
+
+    block_labels = _block_labels(cfg)
+    ir_rows = _ir_resident_rows(cfg)
+    forced_set = _forced_set(cfg, block_labels)
+    blocked_set = _blocked_set(cfg, block_labels)
+
+    if not block_labels:
+        st.error("No blocks configured.")
+        st.stop()
+    if not ir_rows:
+        st.info("Add IR residents first (Residents tab).")
+        st.stop()
+
+    left, main = st.columns([1, 4], gap="large")
+
+    with left:
+        st.markdown("### Resident")
+        idx = st.selectbox(
+            "Resident",
+            options=list(range(len(ir_rows))),
+            format_func=lambda i: f"{ir_rows[int(i)]['Track']} — {ir_rows[int(i)]['Resident']}",
+            label_visibility="collapsed",
+            key="requests_selected_resident_idx",
+        )
+        selected = ir_rows[int(idx)]
+        selected_resident = selected["Resident"]
+        st.caption(f"{selected['Track']}")
+
+        resident_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
+        resident_on = {(blk, rot) for (res, blk, rot) in forced_set if res == selected_resident}
+        st.caption(f"Off checks: {len(resident_off)}")
+        st.caption(f"On checks: {len(resident_on)}")
+
+        btn_clear_off = st.button("Clear all Off", use_container_width=True)
+        btn_clear_on = st.button("Clear all On", use_container_width=True)
+        if btn_clear_off:
+            next_blocked = {t for t in blocked_set if t[0] != selected_resident}
+            cfg["blocked"] = _blocked_dict(next_blocked)
+            st.session_state.pop(f"requests_off_editor_{_keyify(selected_resident)}", None)
+            st.rerun()
+        if btn_clear_on:
+            next_forced = {t for t in forced_set if t[0] != selected_resident}
+            cfg["forced"] = _forced_dict(next_forced)
+            st.session_state.pop(f"requests_on_editor_{_keyify(selected_resident)}", None)
+            st.rerun()
+
+    with main:
+        sub_off, sub_on = st.tabs(["Off", "On"])
+
+        with sub_off:
+            st.caption(
+                "Checked = resident cannot be assigned to that rotation in that block. "
+                "You may check multiple rotations per block."
+            )
+            current_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
+            rows = []
+            for block in block_labels:
+                row = {"Block": block}
+                row["ALL"] = all((block, rot) in current_off for rot in ROTATION_COLUMNS)
+                for rot in ROTATION_COLUMNS:
+                    row[rot] = (block, rot) in current_off
+                rows.append(row)
+
+            edited = st.data_editor(
+                rows,
+                hide_index=True,
+                num_rows="fixed",
+                column_config={
+                    "Block": st.column_config.TextColumn(disabled=True),
+                    "ALL": st.column_config.CheckboxColumn(
+                        help="If checked, blocks all rotations for this block."
+                    ),
+                },
+                key=f"requests_off_editor_{_keyify(selected_resident)}",
+                use_container_width=True,
+            )
+
+            next_blocked = {t for t in blocked_set if t[0] != selected_resident}
+            for row in edited:
+                block = row["Block"]
+                if row.get("ALL", False):
+                    for rot in ROTATION_COLUMNS:
+                        next_blocked.add((selected_resident, block, rot))
+                    continue
+                for rot in ROTATION_COLUMNS:
+                    if row.get(rot, False):
+                        next_blocked.add((selected_resident, block, rot))
+
+            # If something is forced ON, it cannot also be blocked OFF for that exact rotation.
+            next_blocked = {t for t in next_blocked if t not in forced_set}
+            cfg["blocked"] = _blocked_dict(next_blocked)
+
+        with sub_on:
+            st.caption("Select a single rotation per block (or blank for no On request).")
+            current_on_by_block: dict[str, str] = {}
+            for res, blk, rot in forced_set:
+                if res == selected_resident and blk not in current_on_by_block:
+                    current_on_by_block[blk] = rot
+
+            rows = [{"Block": block, "Rotation": current_on_by_block.get(block, "")} for block in block_labels]
+
+            edited = st.data_editor(
+                rows,
+                hide_index=True,
+                num_rows="fixed",
+                column_config={
+                    "Block": st.column_config.TextColumn(disabled=True),
+                    "Rotation": st.column_config.SelectboxColumn(
+                        options=[""] + list(ROTATION_COLUMNS),
+                        help="Set blank to clear the On request for this block.",
+                    ),
+                },
+                key=f"requests_on_editor_{_keyify(selected_resident)}",
+                use_container_width=True,
+            )
+
+            next_forced = {t for t in forced_set if t[0] != selected_resident}
+            for row in edited:
+                rot = str(row.get("Rotation", "") or "").strip()
+                if rot:
+                    next_forced.add((selected_resident, row["Block"], rot))
+
+            cfg["forced"] = _forced_dict(next_forced)
+
+            # Remove any exact blocked conflicts now that forced is updated.
+            blocked_now = _blocked_set(cfg, block_labels)
+            blocked_now = {t for t in blocked_now if t not in next_forced}
+            cfg["blocked"] = _blocked_dict(blocked_now)
+
+
+with tabs[3]:
     st.subheader("Constraint modes")
     modes = cfg["gui"]["constraints"].get("modes", {})
     for spec in CONSTRAINT_SPECS:
@@ -441,7 +699,7 @@ with tabs[2]:
         modes[spec.id] = selection
     cfg["gui"]["constraints"]["modes"] = modes
 
-with tabs[3]:
+with tabs[4]:
     st.subheader("Soft constraint priority")
     modes = cfg["gui"]["constraints"].get("modes", {})
     if_able_ids = [
@@ -472,7 +730,7 @@ with tabs[3]:
                 cfg["gui"]["constraints"]["soft_priority"] = priority
                 st.rerun()
 
-with tabs[4]:
+with tabs[5]:
     st.subheader("Solve")
     st.caption("Runs the solver using the current in-app configuration (no YAML download required).")
 
@@ -573,13 +831,14 @@ with tabs[4]:
                 use_container_width=True,
             )
 
-with tabs[5]:
+with tabs[6]:
     st.subheader("Save/Load Configuration")
 
     def _reset_widget_state() -> None:
         prefixes = (
             "ir_",
             "dr_",
+            "requests_",
             "mode_",
             "prio_",
             "class_year_table",

@@ -28,6 +28,7 @@ class ScheduleInput:
     block_labels: List[str]
     residents: List[Resident]
     blocked: Dict[Tuple[str, int, str], bool]
+    forced: Dict[Tuple[str, int, str], bool]
     weights: Dict[str, int]
     num_solutions: int
     constraint_modes: Dict[str, str]
@@ -169,6 +170,56 @@ def _parse_blocked(data: dict, block_labels: List[str]) -> Dict[Tuple[str, int, 
     return blocked
 
 
+def _parse_forced(data: dict, block_labels: List[str]) -> Dict[Tuple[str, int, str], bool]:
+    forced: Dict[Tuple[str, int, str], bool] = {}
+    per_resident_block: Dict[Tuple[str, int], str] = {}
+    raw = data.get("forced", {})
+
+    def _set(resident_id: str, block: int, rotation: str) -> None:
+        if not resident_id:
+            raise ScheduleError("Forced entries require 'resident'.")
+        if not rotation:
+            raise ScheduleError("Forced entries require 'rotation'.")
+        if rotation not in ROTATIONS:
+            raise ScheduleError(f"Unknown rotation in forced entry: {rotation}")
+        key = (str(resident_id), int(block))
+        if key in per_resident_block and per_resident_block[key] != rotation:
+            raise ScheduleError(
+                f"Forced assignments must have at most one rotation per resident/block; "
+                f"{resident_id} block {block_labels[int(block)]} has both "
+                f"{per_resident_block[key]} and {rotation}."
+            )
+        per_resident_block[key] = rotation
+        forced[(str(resident_id), int(block), str(rotation))] = True
+
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                raise ScheduleError("Forced entries must be mappings when provided as a list.")
+            resident_id = entry.get("resident")
+            block = _parse_block_index(block_labels, entry.get("block"))
+            rotation = entry.get("rotation")
+            _set(resident_id, block, rotation)
+    elif isinstance(raw, dict):
+        for resident_id, blocks in raw.items():
+            if not isinstance(blocks, dict):
+                raise ScheduleError("Forced must map residents to a mapping of blocks.")
+            for block_key, rotation in blocks.items():
+                block = _parse_block_index(block_labels, block_key)
+                if isinstance(rotation, list):
+                    if len(rotation) != 1:
+                        raise ScheduleError(
+                            f"Forced assignments must have exactly one rotation per resident/block; "
+                            f"{resident_id} block {block_labels[int(block)]} has {len(rotation)}."
+                        )
+                    rotation = rotation[0]
+                _set(resident_id, block, rotation)
+    elif raw:
+        raise ScheduleError("Forced must be a list or dictionary when provided.")
+
+    return forced
+
+
 def _parse_weights(data: dict) -> Dict[str, int]:
     weights = data.get("weights", {})
     return {
@@ -246,6 +297,13 @@ def load_schedule_input_from_data(data: dict) -> ScheduleInput:
     block_labels = _parse_block_labels(data)
     residents = _parse_residents(data)
     blocked = _parse_blocked(data, block_labels)
+    forced = _parse_forced(data, block_labels)
+    for key in forced.keys():
+        if blocked.get(key, False):
+            resident_id, block, rotation = key
+            raise ScheduleError(
+                f"Forced assignment conflicts with blocked: {resident_id} {block_labels[int(block)]} {rotation}."
+            )
     weights = _parse_weights(data)
     num_solutions = int(data.get("num_solutions", 1))
     constraint_modes, soft_priority = _parse_gui_constraints(data)
@@ -254,6 +312,7 @@ def load_schedule_input_from_data(data: dict) -> ScheduleInput:
         block_labels=block_labels,
         residents=residents,
         blocked=blocked,
+        forced=forced,
         weights=weights,
         num_solutions=num_solutions,
         constraint_modes=constraint_modes,
@@ -392,6 +451,12 @@ def _add_blocked(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar])
     for (resident_id, block, rotation), is_blocked in ctx.schedule_input.blocked.items():
         if is_blocked:
             _enforce(ctx.model.Add(ctx.u[(resident_id, block, rotation)] == 0), assumption)
+
+
+def _add_forced(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    for (resident_id, block, rotation), is_forced in ctx.schedule_input.forced.items():
+        if is_forced:
+            _enforce(ctx.model.Add(ctx.u[(resident_id, block, rotation)] == 2), assumption)
 
 
 def _add_no_half_assignments(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
@@ -586,6 +651,13 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         softenable=False,
         impact=20,
         add_hard=_add_blocked,
+    ),
+    ConstraintSpec(
+        id="forced",
+        label="Forced assignments",
+        softenable=False,
+        impact=25,
+        add_hard=_add_forced,
     ),
     ConstraintSpec(
         id="no_half_non_ir5",
@@ -837,6 +909,7 @@ def _with_constraint_modes(schedule_input: ScheduleInput, overrides: Dict[str, s
         block_labels=schedule_input.block_labels,
         residents=schedule_input.residents,
         blocked=schedule_input.blocked,
+        forced=schedule_input.forced,
         weights=schedule_input.weights,
         num_solutions=schedule_input.num_solutions,
         constraint_modes=modes,

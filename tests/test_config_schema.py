@@ -16,6 +16,7 @@ class ConfigSchemaTests(unittest.TestCase):
         self.assertEqual(cfg.get("schema_version"), CURRENT_SCHEMA_VERSION)
         self.assertIn("gui", cfg)
         self.assertIn("residents", cfg["gui"])
+        self.assertIn("forced", cfg)
         self.assertFalse(ok)
 
         gui_res = cfg["gui"]["residents"]
@@ -66,4 +67,3 @@ class ConfigSchemaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -44,6 +44,7 @@ def default_config() -> dict:
         "schema_version": CURRENT_SCHEMA_VERSION,
         "blocks": 13,
         "blocked": [],
+        "forced": {},
         "weights": {"consec": 100, "first_timer": 30, "adj": 1},
         "num_solutions": 1,
         "gui": {
@@ -137,6 +138,7 @@ def normalize_config(cfg: Any) -> Tuple[dict, bool]:
     if "blocks" not in cfg and "num_blocks" not in cfg:
         cfg["blocks"] = 13
     cfg.setdefault("blocked", [])
+    cfg.setdefault("forced", {})
     cfg.setdefault("weights", {"consec": 100, "first_timer": 30, "adj": 1})
     cfg.setdefault("num_solutions", 1)
 

@@ -69,6 +69,16 @@ model.Add(u[r,b,rot] == 0).OnlyEnforceIf(blocked[r,b,rot])
 
 `blocked` is **strict** (hard).
 
+### 3.3 Strict block-level requires (`forced`)
+
+If `forced[r,b,rot] == 1`, then that assignment is required as a full 1.0 FTE:
+
+```python
+model.Add(u[r,b,rot] == 2).OnlyEnforceIf(forced[r,b,rot])
+```
+
+`forced` is **strict** (hard) and conflicts with `blocked` for the same `(r,b,rot)`.
+
 ---
 
 ## 4. IR5 Split Coupling (Hard)
@@ -403,4 +413,3 @@ Optional later enhancement:
 - §7.3 and §7.6 are **soft** and implemented via “excess” penalty variables.
 - `full_mh.Not()` is implemented as `u <= 1` (not `u != 2`).
 - Removed redundant “optional strengthening” under split coupling.
-

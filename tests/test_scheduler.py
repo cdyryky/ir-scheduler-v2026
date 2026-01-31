@@ -6,6 +6,7 @@ from ortools.sat.python import cp_model
 
 from ir_scheduler import (
     CONSTRAINT_SPECS,
+    ScheduleError,
     _optimize_and_fix,
     expand_residents,
     load_schedule_input,
@@ -129,6 +130,70 @@ class SchedulerTests(unittest.TestCase):
         result = solve_schedule(schedule_input)
         self.assertIsNotNone(result.diagnostic)
         self.assertTrue(result.diagnostic.conflicting_constraints)
+
+    def test_forced_enforces_assignment_even_without_requirements(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["one_place"] = "always"
+        modes["forced"] = "always"
+
+        data = {
+            "blocks": 1,
+            "residents": [{"id": "dr1a", "track": "DR1"}],
+            "forced": [{"resident": "dr1a", "block": 0, "rotation": "KIR"}],
+            "requirements": {
+                "DR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR4": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR5": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+            },
+            "gui": {"constraints": {"modes": modes}},
+        }
+
+        with tempfile.NamedTemporaryFile("w+", suffix=".yml", delete=False) as handle:
+            yaml.safe_dump(data, handle, sort_keys=False)
+            path = handle.name
+
+        schedule_input = load_schedule_input(path)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+
+        sol = result.solutions[0]
+        self.assertEqual(sol.assignments["dr1a"]["B0"].get("KIR"), 1.0)
+
+    def test_forced_conflicts_with_blocked_raises(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["one_place"] = "always"
+        modes["forced"] = "always"
+        modes["blocked"] = "always"
+
+        data = {
+            "blocks": 1,
+            "residents": [{"id": "dr1a", "track": "DR1"}],
+            "forced": [{"resident": "dr1a", "block": 0, "rotation": "KIR"}],
+            "blocked": [{"resident": "dr1a", "block": 0, "rotation": "KIR"}],
+            "requirements": {
+                "DR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR4": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR5": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+            },
+            "gui": {"constraints": {"modes": modes}},
+        }
+
+        with tempfile.NamedTemporaryFile("w+", suffix=".yml", delete=False) as handle:
+            yaml.safe_dump(data, handle, sort_keys=False)
+            path = handle.name
+
+        with self.assertRaises(ScheduleError):
+            load_schedule_input(path)
 
 
 if __name__ == "__main__":

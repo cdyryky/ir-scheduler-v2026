@@ -43,6 +43,7 @@ The solver expects a YAML file with the following keys:
 - `blocks`: Either an integer (number of blocks) or a list of block labels.
 - `residents`: List of residents with `id` and `track`.
 - `blocked` (optional): Per-resident, per-block, per-rotation hard blocks.
+- `forced` (optional): Per-resident, per-block forced rotation assignment (hard).
 - `weights` (optional): Objective weights for soft constraints.
 - `num_solutions` (optional): Number of solutions to enumerate (default: 1).
 - `gui` (optional): GUI-specific config used by Streamlit (see below).
