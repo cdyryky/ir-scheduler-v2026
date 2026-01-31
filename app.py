@@ -21,7 +21,6 @@ from ir_config import (
 from ir_scheduler import (
     CONSTRAINT_SPECS,
     ScheduleError,
-    _is_feasible,
     expand_residents,
     load_schedule_input_from_data,
     result_to_csv,
@@ -290,7 +289,6 @@ st.markdown(
         <h1 class="hero-title">{APP_TITLE}</h1>
         <div class="hero-badge">CONFIG</div>
       </div>
-      <p class="hero-sub">Build residents, set constraints and priorities, then solve and export.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -313,7 +311,6 @@ tabs = st.tabs(
         "Requests",
         "Constraints",
         "Prioritization",
-        "Checks",
         "Solve",
         "Save/Load Configuration",
     ]
@@ -1086,7 +1083,8 @@ with tabs[4]:
                 cfg["gui"]["constraints"]["soft_priority"] = priority
                 st.rerun()
 
-with tabs[5]:
+if False:  # Checks tab removed
+    """
     st.subheader("Checks")
     st.caption("Quick preflight checks for common conflicts and settings that often cause infeasibility or relaxations.")
 
@@ -1412,8 +1410,9 @@ with tabs[5]:
                 st.success("Feasibility probe: model is feasible with current settings (Try constraints may be relaxed).")
             else:
                 st.error("Feasibility probe: model is infeasible with current settings.")
+    """
 
-with tabs[6]:
+with tabs[5]:
     st.subheader("Solve")
     st.caption("Runs the solver using the current in-app configuration (no YAML download required).")
 
@@ -1515,7 +1514,7 @@ with tabs[6]:
                 use_container_width=True,
             )
 
-with tabs[7]:
+with tabs[6]:
     st.subheader("Save/Load Configuration")
 
     def _reset_widget_state() -> None:
@@ -1523,7 +1522,6 @@ with tabs[7]:
             "ir_",
             "dr_",
             "requests_",
-            "checks_",
             "cparam_",
             "mode_",
             "prio_",
