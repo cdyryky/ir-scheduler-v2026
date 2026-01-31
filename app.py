@@ -706,14 +706,19 @@ with tabs[2]:
 with tabs[3]:
     st.subheader("Constraint modes")
     modes = cfg["gui"]["constraints"].get("modes", {})
-    for spec in CONSTRAINT_SPECS:
+    if not isinstance(modes, dict):
+        modes = {}
+
+    def _render_spec_mode(spec) -> None:
         if spec.softenable:
             options = ["always", "if_able", "disabled"]
         else:
             options = ["always", "disabled"]
+
         default_mode = modes.get(spec.id, "if_able" if spec.softenable else "always")
         if default_mode not in options:
             default_mode = "if_able" if spec.softenable else "always"
+
         selection = st.radio(
             _spec_label(spec),
             options=options,
@@ -722,6 +727,41 @@ with tabs[3]:
             key=f"mode_{spec.id}",
         )
         modes[spec.id] = selection
+
+    categories = {
+        "Requests": {"blocked", "forced"},
+        "Core Rules": {"one_place", "no_half_non_ir5", "ir5_split_coupling"},
+        "Coverage & Caps": {
+            "coverage_48x_ir",
+            "coverage_48x_ctus",
+            "mh_total_minmax",
+            "mh_ctus_cap",
+            "kir_cap",
+            "ir5_mh_min_per_block",
+            "ir4_plus_mh_cap",
+            "track_requirements",
+        },
+        "Track Rules": {"dr1_early_block", "ir3_late_block"},
+        "Preferences": {"first_timer", "consec_full_mh", "no_sequential_year1_3"},
+    }
+
+    used_ids = set().union(*categories.values()) if categories else set()
+    other_ids = [spec.id for spec in CONSTRAINT_SPECS if spec.id not in used_ids]
+    tab_names = list(categories.keys()) + (["Other"] if other_ids else [])
+    sub_tabs = st.tabs(tab_names)
+
+    for tab_name, tab in zip(tab_names, sub_tabs):
+        with tab:
+            ids = categories.get(tab_name, set())
+            for spec in CONSTRAINT_SPECS:
+                if tab_name == "Other":
+                    if spec.id not in other_ids:
+                        continue
+                else:
+                    if spec.id not in ids:
+                        continue
+                _render_spec_mode(spec)
+
     cfg["gui"]["constraints"]["modes"] = modes
 
 with tabs[4]:
