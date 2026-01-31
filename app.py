@@ -547,14 +547,27 @@ with tabs[2]:
 
     with left:
         st.markdown("### Resident")
-        idx = st.selectbox(
-            "Resident",
-            options=list(range(len(ir_rows))),
-            format_func=lambda i: f"{ir_rows[int(i)]['Track']} — {ir_rows[int(i)]['Resident']}",
-            label_visibility="collapsed",
-            key="requests_selected_resident_idx",
-        )
-        selected = ir_rows[int(idx)]
+        if "requests_selected_resident_idx" not in st.session_state:
+            st.session_state["requests_selected_resident_idx"] = 0
+
+        # Clamp in case residents change (e.g., after loading a new config).
+        selected_idx = int(st.session_state.get("requests_selected_resident_idx", 0) or 0)
+        selected_idx = max(0, min(selected_idx, len(ir_rows) - 1))
+        st.session_state["requests_selected_resident_idx"] = selected_idx
+
+        for i, row in enumerate(ir_rows):
+            label = f"{row['Track']} — {row['Resident']}"
+            clicked = st.button(
+                label,
+                key=f"requests_pick_{i}",
+                type="primary" if i == selected_idx else "secondary",
+                use_container_width=True,
+            )
+            if clicked and i != selected_idx:
+                st.session_state["requests_selected_resident_idx"] = i
+                st.rerun()
+
+        selected = ir_rows[selected_idx]
         selected_resident = selected["Resident"]
         st.caption(f"{selected['Track']}")
 
@@ -562,19 +575,6 @@ with tabs[2]:
         resident_on = {(blk, rot) for (res, blk, rot) in forced_set if res == selected_resident}
         st.caption(f"Off checks: {len(resident_off)}")
         st.caption(f"On checks: {len(resident_on)}")
-
-        btn_clear_off = st.button("Clear all Off", use_container_width=True)
-        btn_clear_on = st.button("Clear all On", use_container_width=True)
-        if btn_clear_off:
-            next_blocked = {t for t in blocked_set if t[0] != selected_resident}
-            cfg["blocked"] = _blocked_dict(next_blocked)
-            st.session_state.pop(f"requests_off_editor_{_keyify(selected_resident)}", None)
-            st.rerun()
-        if btn_clear_on:
-            next_forced = {t for t in forced_set if t[0] != selected_resident}
-            cfg["forced"] = _forced_dict(next_forced)
-            st.session_state.pop(f"requests_on_editor_{_keyify(selected_resident)}", None)
-            st.rerun()
 
     with main:
         sub_off, sub_on = st.tabs(["Off", "On"])
@@ -584,38 +584,67 @@ with tabs[2]:
                 "Checked = resident cannot be assigned to that rotation in that block. "
                 "You may check multiple rotations per block."
             )
-            current_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
-            rows = []
-            for block in block_labels:
-                row = {"Block": block}
-                row["ALL"] = all((block, rot) in current_off for rot in ROTATION_COLUMNS)
-                for rot in ROTATION_COLUMNS:
-                    row[rot] = (block, rot) in current_off
-                rows.append(row)
+            current_on_by_block: dict[str, str] = {}
+            for res, blk, rot in forced_set:
+                if res == selected_resident and blk not in current_on_by_block:
+                    current_on_by_block[blk] = rot
 
-            edited = st.data_editor(
-                rows,
-                hide_index=True,
-                num_rows="fixed",
-                column_config={
-                    "Block": st.column_config.TextColumn(disabled=True),
-                    "ALL": st.column_config.CheckboxColumn(
-                        help="If checked, blocks all rotations for this block."
-                    ),
-                },
-                key=f"requests_off_editor_{_keyify(selected_resident)}",
-                use_container_width=True,
-            )
+            current_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
+
+            header = st.columns([1.2, 0.9, 0.9] + [1.0] * len(ROTATION_COLUMNS) + [1.1])
+            header[0].markdown("**Block**")
+            header[1].markdown("**Select**")
+            header[2].markdown("**Clear**")
+            for idx, rot in enumerate(ROTATION_COLUMNS):
+                header[3 + idx].markdown(f"**{rot}**")
+            header[-1].markdown("**On**")
+
+            for block in block_labels:
+                k_res = _keyify(selected_resident)
+                k_blk = _keyify(block)
+                forced_rot = current_on_by_block.get(block, "")
+
+                cols = st.columns([1.2, 0.9, 0.9] + [1.0] * len(ROTATION_COLUMNS) + [1.1])
+                cols[0].write(block)
+
+                if cols[1].button("All", key=f"requests_off_all_{k_res}_{k_blk}", use_container_width=True):
+                    for rot in ROTATION_COLUMNS:
+                        if forced_rot and rot == forced_rot:
+                            st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = False
+                        else:
+                            st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = True
+                    st.rerun()
+
+                if cols[2].button("None", key=f"requests_off_none_{k_res}_{k_blk}", use_container_width=True):
+                    for rot in ROTATION_COLUMNS:
+                        st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = False
+                    st.rerun()
+
+                for idx, rot in enumerate(ROTATION_COLUMNS):
+                    k_rot = _keyify(rot)
+                    key = f"requests_off_{k_res}_{k_blk}_{k_rot}"
+                    checked = cols[3 + idx].checkbox(
+                        "off",
+                        value=(block, rot) in current_off,
+                        key=key,
+                        label_visibility="collapsed",
+                        disabled=bool(forced_rot and rot == forced_rot),
+                    )
+                    if forced_rot and rot == forced_rot and checked:
+                        st.session_state[key] = False
+
+                cols[-1].write(forced_rot or "—")
 
             next_blocked = {t for t in blocked_set if t[0] != selected_resident}
-            for row in edited:
-                block = row["Block"]
-                if row.get("ALL", False):
-                    for rot in ROTATION_COLUMNS:
-                        next_blocked.add((selected_resident, block, rot))
-                    continue
+            for block in block_labels:
+                k_res = _keyify(selected_resident)
+                k_blk = _keyify(block)
+                forced_rot = current_on_by_block.get(block, "")
                 for rot in ROTATION_COLUMNS:
-                    if row.get(rot, False):
+                    if forced_rot and rot == forced_rot:
+                        continue
+                    key = f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"
+                    if bool(st.session_state.get(key, (block, rot) in current_off)):
                         next_blocked.add((selected_resident, block, rot))
 
             # If something is forced ON, it cannot also be blocked OFF for that exact rotation.
@@ -629,28 +658,42 @@ with tabs[2]:
                 if res == selected_resident and blk not in current_on_by_block:
                     current_on_by_block[blk] = rot
 
-            rows = [{"Block": block, "Rotation": current_on_by_block.get(block, "")} for block in block_labels]
+            blocked_now = _blocked_set(cfg, block_labels)
+            blocked_by_block: dict[str, set[str]] = {}
+            for res, blk, rot in blocked_now:
+                if res != selected_resident:
+                    continue
+                blocked_by_block.setdefault(blk, set()).add(rot)
 
-            edited = st.data_editor(
-                rows,
-                hide_index=True,
-                num_rows="fixed",
-                column_config={
-                    "Block": st.column_config.TextColumn(disabled=True),
-                    "Rotation": st.column_config.SelectboxColumn(
-                        options=[""] + list(ROTATION_COLUMNS),
-                        help="Set blank to clear the On request for this block.",
-                    ),
-                },
-                key=f"requests_on_editor_{_keyify(selected_resident)}",
-                use_container_width=True,
-            )
+            for block in block_labels:
+                k_res = _keyify(selected_resident)
+                k_blk = _keyify(block)
+                key = f"requests_on_{k_res}_{k_blk}"
+
+                blocked_rots = blocked_by_block.get(block, set())
+                options = [""] + [rot for rot in ROTATION_COLUMNS if rot not in blocked_rots]
+                current = current_on_by_block.get(block, "")
+                if current not in options:
+                    current = ""
+
+                cols = st.columns([1.2, 4.0])
+                cols[0].write(block)
+                cols[1].selectbox(
+                    "Rotation",
+                    options=options,
+                    index=options.index(current),
+                    key=key,
+                    label_visibility="collapsed",
+                    help="Set blank to clear the On request for this block.",
+                )
 
             next_forced = {t for t in forced_set if t[0] != selected_resident}
-            for row in edited:
-                rot = str(row.get("Rotation", "") or "").strip()
+            for block in block_labels:
+                k_res = _keyify(selected_resident)
+                k_blk = _keyify(block)
+                rot = str(st.session_state.get(f"requests_on_{k_res}_{k_blk}", "") or "").strip()
                 if rot:
-                    next_forced.add((selected_resident, row["Block"], rot))
+                    next_forced.add((selected_resident, block, rot))
 
             cfg["forced"] = _forced_dict(next_forced)
 
