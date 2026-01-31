@@ -21,6 +21,7 @@ from ir_config import (
 from ir_scheduler import (
     CONSTRAINT_SPECS,
     ScheduleError,
+    _is_feasible,
     expand_residents,
     load_schedule_input_from_data,
     result_to_csv,
@@ -312,6 +313,7 @@ tabs = st.tabs(
         "Requests",
         "Constraints",
         "Prioritization",
+        "Checks",
         "Solve",
         "Save/Load Configuration",
     ]
@@ -1085,6 +1087,333 @@ with tabs[4]:
                 st.rerun()
 
 with tabs[5]:
+    st.subheader("Checks")
+    st.caption("Quick preflight checks for common conflicts and settings that often cause infeasibility or relaxations.")
+
+    block_labels = _block_labels(cfg)
+    if not block_labels:
+        st.error("No blocks configured.")
+        st.stop()
+
+    forced_set = _forced_set(cfg, block_labels)
+    blocked_set = _blocked_set(cfg, block_labels)
+    block_idx = {b: i for i, b in enumerate(block_labels)}
+
+    modes = cfg.get("gui", {}).get("constraints", {}).get("modes", {})
+    if not isinstance(modes, dict):
+        modes = {}
+    params = cfg.get("gui", {}).get("constraints", {}).get("params", {})
+    if not isinstance(params, dict):
+        params = {}
+
+    spec_by_id = {spec.id: spec for spec in CONSTRAINT_SPECS}
+
+    def _mode_for(constraint_id: str) -> str:
+        spec = spec_by_id.get(constraint_id)
+        default = "if_able" if (spec and spec.softenable) else "always"
+        mode = str(modes.get(constraint_id, default)).lower()
+        if mode not in {"always", "if_able", "disabled"}:
+            return default
+        if constraint_id in {"one_place", "no_half_non_ir5", "ir5_split_coupling"} and mode == "if_able":
+            return "always"
+        return mode
+
+    def _params_for(constraint_id: str) -> dict:
+        raw = params.get(constraint_id, {})
+        return raw if isinstance(raw, dict) else {}
+
+    one_place_active = _mode_for("one_place") != "disabled"
+
+    def _residents_from_cfg() -> list[dict]:
+        raw = cfg.get("residents")
+        if isinstance(raw, list) and raw:
+            return raw
+        gui_res = cfg.get("gui", {}).get("residents")
+        if isinstance(gui_res, dict):
+            try:
+                return expand_residents(gui_res)
+            except Exception:
+                return []
+        return []
+
+    residents_list = _residents_from_cfg()
+    if not residents_list:
+        st.warning("Residents list missing. Visit the Residents tab or load a config that includes residents.")
+
+    resident_to_track: dict[str, str] = {}
+    for entry in residents_list:
+        if isinstance(entry, dict) and entry.get("id") and entry.get("track"):
+            resident_to_track[str(entry["id"])] = str(entry["track"])
+
+    forced_by_res_block: dict[tuple[str, str], str] = {}
+    forced_units_by_block_rot: dict[tuple[str, str], int] = {}
+    for resident, block, rotation in forced_set:
+        forced_by_res_block[(resident, block)] = rotation
+        forced_units_by_block_rot[(block, rotation)] = forced_units_by_block_rot.get((block, rotation), 0) + 2
+
+    results: list[dict] = []
+
+    def _add(level: str, issue: str, details: str, suggestion: str = "") -> None:
+        results.append({"Level": level, "Issue": issue, "Details": details, "Suggestion": suggestion})
+
+    def _level_for(mode: str) -> Optional[str]:
+        if mode == "always":
+            return "Error"
+        if mode == "if_able":
+            return "Warning"
+        return None
+
+    def _resident_can_take(resident: str, block: str, rotation: str, *, strict_track_rules: bool) -> bool:
+        if (resident, block, rotation) in blocked_set:
+            return False
+
+        forced_rot = forced_by_res_block.get((resident, block))
+        if one_place_active and forced_rot and forced_rot != rotation:
+            return False
+
+        if not strict_track_rules:
+            return True
+
+        b_idx = block_idx.get(block, -1)
+        track = resident_to_track.get(resident, "")
+
+        dr1_mode = _mode_for("dr1_early_block")
+        if dr1_mode == "always" and track == "DR1" and rotation == "MH-IR":
+            first_n = int(_params_for("dr1_early_block").get("first_n_blocks", 4) or 0)
+            if b_idx < first_n:
+                return False
+
+        ir3_mode = _mode_for("ir3_late_block")
+        if ir3_mode == "always" and track == "IR3" and rotation in {"MH-IR", "48X-IR"}:
+            after_block = int(_params_for("ir3_late_block").get("after_block", 7) or 0)
+            if b_idx >= after_block:
+                return False
+
+        return True
+
+    # Basic conflicts
+    conflicts = forced_set.intersection(blocked_set)
+    if conflicts:
+        samples = ", ".join(sorted({f"{r} {b} {rot}" for (r, b, rot) in list(conflicts)[:5]}))
+        _add(
+            "Error",
+            "On/Off conflict",
+            f"Same resident/block/rotation is both forced On and blocked Off (e.g. {samples}).",
+            "Fix in Requests tab: clear either the On or Off selection for those cells.",
+        )
+
+    forced_multi: dict[tuple[str, str], list[str]] = {}
+    for resident, block, rotation in forced_set:
+        forced_multi.setdefault((resident, block), []).append(rotation)
+    bad_multi = {k: v for k, v in forced_multi.items() if len(set(v)) > 1}
+    if bad_multi:
+        (resident, block), rots = next(iter(bad_multi.items()))
+        _add(
+            "Error",
+            "Multiple On rotations in one block",
+            f"{resident} has multiple forced On rotations in {block}: {sorted(set(rots))}.",
+            "Fix in Requests → On: each block must have at most one forced rotation per resident.",
+        )
+
+    # Coverage checks
+    def _check_coverage(spec_id: str, rotation: str) -> None:
+        mode = _mode_for(spec_id)
+        level = _level_for(mode)
+        if level is None:
+            return
+        p = _params_for(spec_id)
+        op = str(p.get("op", "==")).strip()
+        if op not in {"<=", "==", ">="}:
+            op = "=="
+        try:
+            target_units = int(p.get("target_units", 2))
+        except Exception:
+            target_units = 2
+        target_units = 2 * int(round(target_units / 2))  # whole-number FTE only
+
+        for block in block_labels:
+            forced_units = forced_units_by_block_rot.get((block, rotation), 0)
+            max_units = 0
+            for resident in resident_to_track.keys():
+                if _resident_can_take(resident, block, rotation, strict_track_rules=True):
+                    max_units += 2
+            if op == "<=" and forced_units > target_units:
+                _add(
+                    level,
+                    f"{rotation} coverage exceeds target",
+                    f"{block}: forced {forced_units/2:.1f} FTE > target {target_units/2:.1f} FTE.",
+                    "Lower the target, change the inequality, or clear conflicting On requests.",
+                )
+            if op in {"==", ">="} and max_units < target_units:
+                _add(
+                    level,
+                    f"{rotation} coverage target unreachable",
+                    f"{block}: max possible {max_units/2:.1f} FTE < target {target_units/2:.1f} FTE.",
+                    "Lower the target, change to ≤, or clear Off requests that remove eligible residents.",
+                )
+            if op == "==" and forced_units > target_units:
+                _add(
+                    level,
+                    f"{rotation} forced coverage exceeds exact target",
+                    f"{block}: forced {forced_units/2:.1f} FTE > exact target {target_units/2:.1f} FTE.",
+                    "Clear conflicting On requests or change the target/inequality.",
+                )
+
+    _check_coverage("coverage_48x_ir", "48X-IR")
+    _check_coverage("coverage_48x_ctus", "48X-CT/US")
+
+    # MH total range + caps
+    mh_mode = _mode_for("mh_total_minmax")
+    mh_level = _level_for(mh_mode)
+    if mh_level is not None:
+        p = _params_for("mh_total_minmax")
+        try:
+            min_fte = int(p.get("min_fte", 3))
+            max_fte = int(p.get("max_fte", 4))
+        except Exception:
+            min_fte, max_fte = 3, 4
+        if min_fte > max_fte:
+            _add("Error", "MH total range invalid", f"Min {min_fte}.0 FTE is greater than max {max_fte}.0 FTE.", "Fix the min/max values.")
+        for block in block_labels:
+            forced_mh_units = forced_units_by_block_rot.get((block, "MH-IR"), 0) + forced_units_by_block_rot.get(
+                (block, "MH-CT/US"), 0
+            )
+            if forced_mh_units > 2 * max_fte:
+                _add(
+                    mh_level,
+                    "MH total exceeds max",
+                    f"{block}: forced MH total {forced_mh_units/2:.1f} FTE > max {max_fte}.0 FTE.",
+                    "Raise the max or clear conflicting On requests.",
+                )
+            max_mh_units = 0
+            for resident in resident_to_track.keys():
+                can_mh_ir = _resident_can_take(resident, block, "MH-IR", strict_track_rules=True)
+                can_mh_ct = _resident_can_take(resident, block, "MH-CT/US", strict_track_rules=True)
+                if can_mh_ir or can_mh_ct:
+                    max_mh_units += 2
+            if forced_mh_units < 2 * min_fte and max_mh_units < 2 * min_fte:
+                _add(
+                    mh_level,
+                    "MH total min unreachable",
+                    f"{block}: max possible MH total {max_mh_units/2:.1f} FTE < min {min_fte}.0 FTE.",
+                    "Lower the min or clear Off requests on MH rotations.",
+                )
+
+    def _check_cap(spec_id: str, rotation: str) -> None:
+        mode = _mode_for(spec_id)
+        level = _level_for(mode)
+        if level is None:
+            return
+        p = _params_for(spec_id)
+        try:
+            max_fte = int(p.get("max_fte", 0))
+        except Exception:
+            max_fte = 0
+        for block in block_labels:
+            forced_units = forced_units_by_block_rot.get((block, rotation), 0)
+            if forced_units > 2 * max_fte:
+                _add(
+                    level,
+                    f"{rotation} cap exceeded",
+                    f"{block}: forced {forced_units/2:.1f} FTE > cap {max_fte}.0 FTE.",
+                    "Raise the cap or clear conflicting On requests.",
+                )
+
+    _check_cap("mh_ctus_cap", "MH-CT/US")
+    _check_cap("kir_cap", "KIR")
+
+    # Senior MH-IR cap
+    senior_mode = _mode_for("ir4_plus_mh_cap")
+    senior_level = _level_for(senior_mode)
+    if senior_level is not None:
+        p = _params_for("ir4_plus_mh_cap")
+        try:
+            ir_min_year = int(p.get("ir_min_year", 4))
+            max_fte = int(p.get("max_fte", 2))
+        except Exception:
+            ir_min_year, max_fte = 4, 2
+
+        def _is_senior(resident: str) -> bool:
+            track = resident_to_track.get(resident, "")
+            if not track.startswith("IR"):
+                return False
+            try:
+                year = int(track[2:])
+            except ValueError:
+                return False
+            return year >= ir_min_year
+
+        for block in block_labels:
+            forced_senior_units = 0
+            for resident in resident_to_track.keys():
+                if not _is_senior(resident):
+                    continue
+                if forced_by_res_block.get((resident, block)) == "MH-IR":
+                    forced_senior_units += 2
+            if forced_senior_units > 2 * max_fte:
+                _add(
+                    senior_level,
+                    "Senior MH-IR cap exceeded",
+                    f"{block}: forced senior MH-IR {forced_senior_units/2:.1f} FTE > cap {max_fte}.0 FTE (senior = IR{ir_min_year}+).",
+                    "Raise the cap, increase the senior threshold, or clear conflicting On requests.",
+                )
+
+    # Track requirements sanity
+    req_mode = _mode_for("track_requirements")
+    req_level = _level_for(req_mode)
+    requirements = cfg.get("requirements")
+    if req_level is not None and isinstance(requirements, dict) and one_place_active:
+        per_track_sum = {}
+        for track, row in requirements.items():
+            if not isinstance(row, dict):
+                continue
+            total = 0
+            for rot in ROTATION_COLUMNS:
+                try:
+                    total += int(row.get(rot, 0))
+                except Exception:
+                    continue
+            per_track_sum[str(track)] = total
+        num_blocks = len(block_labels)
+        too_high = {t: n for t, n in per_track_sum.items() if n > num_blocks}
+        if too_high:
+            track, total = next(iter(too_high.items()))
+            _add(
+                req_level,
+                "Per-class requirements exceed available blocks",
+                f"{track}: total required blocks across rotations is {total}, but there are only {num_blocks} blocks.",
+                "Lower the per-class requirements totals or disable the 'one rotation per resident per block' core rule.",
+            )
+
+    # Try-mode warnings for track rules (informational)
+    for constraint_id, label in [("dr1_early_block", "DR1 early MH-IR rule"), ("ir3_late_block", "IR3 late rule")]:
+        if _mode_for(constraint_id) == "if_able":
+            _add(
+                "Info",
+                f"{label} set to Try",
+                "This rule can be relaxed by the solver if needed.",
+                "If you want it strictly enforced, switch it to On (hard).",
+            )
+
+    if results:
+        st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+    else:
+        st.success("No issues found by quick checks.")
+
+    st.divider()
+    if st.button("Run quick feasibility probe (no schedule)", key="checks_probe_btn", type="primary"):
+        try:
+            schedule_input = load_schedule_input_from_data(cfg)
+        except Exception as exc:
+            st.error(f"Invalid configuration: {exc}")
+        else:
+            ok = _is_feasible(schedule_input)
+            if ok:
+                st.success("Feasibility probe: model is feasible with current settings (Try constraints may be relaxed).")
+            else:
+                st.error("Feasibility probe: model is infeasible with current settings.")
+
+with tabs[6]:
     st.subheader("Solve")
     st.caption("Runs the solver using the current in-app configuration (no YAML download required).")
 
@@ -1186,7 +1515,7 @@ with tabs[5]:
                 use_container_width=True,
             )
 
-with tabs[6]:
+with tabs[7]:
     st.subheader("Save/Load Configuration")
 
     def _reset_widget_state() -> None:
@@ -1194,6 +1523,7 @@ with tabs[6]:
             "ir_",
             "dr_",
             "requests_",
+            "checks_",
             "cparam_",
             "mode_",
             "prio_",
