@@ -226,8 +226,8 @@ st.markdown(
     .hero {
         position: relative;
         border-radius: 16px;
-        padding: 1.15rem 1.35rem;
-        margin: 0 0 0.9rem 0;
+        padding: 0.9rem 1.15rem;
+        margin: 0 0 0.7rem 0;
         background:
           radial-gradient(900px 260px at 10% 0%, rgba(59, 130, 246, 0.16), rgba(0,0,0,0) 60%),
           radial-gradient(900px 260px at 90% 10%, rgba(168, 85, 247, 0.14), rgba(0,0,0,0) 60%),
@@ -262,7 +262,7 @@ st.markdown(
         font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
         font-weight: 800;
         letter-spacing: -0.02em;
-        font-size: clamp(24px, 2.6vw, 40px);
+        font-size: clamp(20px, 2.0vw, 32px);
         line-height: 1.1;
         color: var(--text-color);
     }
@@ -365,22 +365,40 @@ with tabs[1]:
         rows.append(row)
 
     rows_df = pd.DataFrame(rows, columns=["Track"] + DISPLAY_COLUMNS)
-    with st.expander("Edit class/year requirements", expanded=False):
-        edited_df = st.data_editor(
-            rows_df,
-            hide_index=True,
-            num_rows="fixed",
-            column_config={
-                "Track": st.column_config.TextColumn(disabled=True),
-                "MH-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
-                "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
-                "48X-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
-                "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
-                "KIR": st.column_config.NumberColumn(min_value=0, step=1.0),
-                "Total Blocks": st.column_config.NumberColumn(disabled=True),
-            },
-            key="class_year_table",
-        )
+    if "class_year_editor_open" not in st.session_state:
+        st.session_state["class_year_editor_open"] = False
+
+    left_btn, _ = st.columns([1, 3])
+    if left_btn.button(
+        "Edit class/year requirements",
+        type="primary",
+        key="class_year_editor_toggle_btn",
+        use_container_width=True,
+    ):
+        st.session_state["class_year_editor_open"] = not bool(st.session_state.get("class_year_editor_open"))
+
+    if st.session_state.get("class_year_editor_open"):
+        with st.container(border=True):
+            edited_df = st.data_editor(
+                rows_df,
+                hide_index=True,
+                num_rows="fixed",
+                column_config={
+                    "Track": st.column_config.TextColumn(disabled=True),
+                    "MH-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
+                    "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
+                    "48X-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
+                    "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
+                    "KIR": st.column_config.NumberColumn(min_value=0, step=1.0),
+                    "Total Blocks": st.column_config.NumberColumn(disabled=True),
+                },
+                key="class_year_table",
+            )
+            if st.button("Close editor", key="class_year_editor_close_btn"):
+                st.session_state["class_year_editor_open"] = False
+                st.rerun()
+    else:
+        edited_df = rows_df
 
     updated_req = {}
     for row in edited_df.to_dict("records"):
@@ -1816,6 +1834,7 @@ with tabs[6]:
             "cparam_",
             "mode_",
             "prio_",
+            "class_year_editor_",
             "class_year_table",
             "num_solutions_input",
             "solution_select",
