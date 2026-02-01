@@ -1,13 +1,19 @@
 from typing import Optional
 
 import os
+import tempfile
 from datetime import date
 import math
 
 import streamlit as st
 import yaml
 import pandas as pd
-from matplotlib import cm, colors
+
+# Matplotlib defaults to a user home cache which may be unwritable in some environments.
+# Streamlit reruns can get sluggish if Matplotlib repeatedly creates temp caches / rebuilds font cache.
+_mpl_cache_dir = os.path.join(tempfile.gettempdir(), "ir-scheduler-mplconfig")
+os.makedirs(_mpl_cache_dir, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", _mpl_cache_dir)
 
 from ir_config import (
     CLASS_TRACKS,
@@ -1635,14 +1641,26 @@ with tabs[5]:
                 if schedule_input is not None:
                     ir_totals_df = _ir_totals_table(sol, schedule_input)
                     if not ir_totals_df.empty:
-                        numeric_cols = ROTATION_COLUMNS + ["Total"]
-                        nonzero = ir_totals_df[numeric_cols].to_numpy()
-                        nonzero = nonzero[nonzero > 0]
-                        vmin = float(nonzero.min()) if nonzero.size else 0.0
-                        vmax = float(nonzero.max()) if nonzero.size else 0.0
-                        cmap = cm.get_cmap("viridis")
+                        from matplotlib import colormaps, colors
 
-                        def _bg(value: int | float | None) -> str:
+                        numeric_cols = ROTATION_COLUMNS + ["Total"]
+                        rot_cols = ROTATION_COLUMNS
+                        total_col = ["Total"]
+
+                        rot_values = ir_totals_df[rot_cols].to_numpy()
+                        rot_nonzero = rot_values[rot_values > 0]
+                        rot_vmin = float(rot_nonzero.min()) if rot_nonzero.size else 0.0
+                        rot_vmax = float(rot_nonzero.max()) if rot_nonzero.size else 0.0
+
+                        total_values = ir_totals_df[total_col].to_numpy()
+                        total_nonzero = total_values[total_values > 0]
+                        total_vmin = float(total_nonzero.min()) if total_nonzero.size else 0.0
+                        total_vmax = float(total_nonzero.max()) if total_nonzero.size else 0.0
+
+                        cmap_rot = colormaps.get_cmap("viridis")
+                        cmap_total = colormaps.get_cmap("Greys")
+
+                        def _bg_from(value: int | float | None, vmin: float, vmax: float, cmap) -> str:
                             if value is None or pd.isna(value):
                                 return ""
                             v = float(value)
@@ -1657,6 +1675,12 @@ with tabs[5]:
                             text = "#111111" if luminance > 0.55 else "#ffffff"
                             return f"background-color: {hex_color}; color: {text}; font-weight: 600;"
 
+                        def _bg_rot(value: int | float | None) -> str:
+                            return _bg_from(value, rot_vmin, rot_vmax, cmap_rot)
+
+                        def _bg_total(value: int | float | None) -> str:
+                            return _bg_from(value, total_vmin, total_vmax, cmap_total)
+
                         def _fmt_cell(value: int | float | None) -> str:
                             if value is None or pd.isna(value):
                                 return ""
@@ -1667,11 +1691,9 @@ with tabs[5]:
 
                         st.markdown("**IR resident rotation totals**")
                         st.dataframe(
-                            ir_totals_df.style.map(_bg, subset=numeric_cols).format(
-                                _fmt_cell,
-                                subset=numeric_cols,
-                                na_rep="",
-                            ),
+                            ir_totals_df.style.map(_bg_rot, subset=rot_cols)
+                            .map(_bg_total, subset=total_col)
+                            .format(_fmt_cell, subset=numeric_cols, na_rep=""),
                             use_container_width=True,
                             hide_index=True,
                         )
