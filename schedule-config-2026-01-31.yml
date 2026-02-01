@@ -1,0 +1,252 @@
+schema_version: 1
+blocks: 13
+blocked: {}
+forced: {}
+weights:
+  consec: 100
+  first_timer: 30
+  adj: 1
+num_solutions: 1
+gui:
+  residents:
+    IR:
+      IR1:
+      - Gaburak
+      - Miller
+      IR2:
+      - Qi
+      - Verst
+      IR3:
+      - Madsen
+      - Mahmoud
+      IR4:
+      - Javan
+      - Virk
+      IR5:
+      - Brock
+      - Katz
+    DR_counts:
+      DR1: 8
+      DR2: 7
+      DR3: 8
+  class_year_requirements:
+    IR1:
+      MH-IR: 1.0
+      MH-CT/US: 0.0
+      48X-IR: 1.0
+      48X-CT/US: 1.0
+      KIR: 0.0
+    IR2:
+      MH-IR: 2.0
+      MH-CT/US: 0.0
+      48X-IR: 0.5
+      48X-CT/US: 0.5
+      KIR: 0.0
+    IR3:
+      MH-IR: 1.0
+      MH-CT/US: 0.0
+      48X-IR: 1.0
+      48X-CT/US: 1.0
+      KIR: 0.0
+    IR4:
+      MH-IR: 2.0
+      MH-CT/US: 0.0
+      48X-IR: 1.0
+      48X-CT/US: 0.0
+      KIR: 3.0
+    IR5:
+      MH-IR: 7.0
+      MH-CT/US: 0.0
+      48X-IR: 3.0
+      48X-CT/US: 0.0
+      KIR: 3.0
+    DR1:
+      MH-IR: 1
+      MH-CT/US: 0
+      48X-IR: 0
+      48X-CT/US: 0
+      KIR: 0
+    DR2:
+      MH-IR: 0
+      MH-CT/US: 1
+      48X-IR: 0
+      48X-CT/US: 0
+      KIR: 0
+    DR3:
+      MH-IR: 0
+      MH-CT/US: 0
+      48X-IR: 0
+      48X-CT/US: 1
+      KIR: 0
+  constraints:
+    modes:
+      one_place: always
+      block_total_zero_or_full: always
+      no_half_non_ir5: always
+      blocked: always
+      forced: always
+      coverage_48x_ir: always
+      coverage_48x_ctus: always
+      mh_total_minmax: always
+      mh_ctus_cap: always
+      kir_cap: always
+      track_requirements: always
+      ir5_mh_min_per_block: always
+      ir4_plus_mh_cap: always
+      dr1_early_block: always
+      ir3_late_block: always
+      first_timer: if_able
+      consec_full_mh: if_able
+      no_sequential_year1_3: if_able
+    soft_priority:
+    - first_timer
+    - consec_full_mh
+    - no_sequential_year1_3
+    params:
+      coverage_48x_ir:
+        op: ==
+        target_units: 2
+      coverage_48x_ctus:
+        op: ==
+        target_units: 2
+      mh_total_minmax:
+        min_fte: 3
+        max_fte: 4
+      mh_ctus_cap:
+        max_fte: 1
+      kir_cap:
+        max_fte: 2
+      ir4_plus_mh_cap:
+        ir_min_year: 4
+        max_fte: 2
+      dr1_early_block:
+        first_n_blocks: 4
+      ir3_late_block:
+        after_block: 7
+      consec_full_mh:
+        max_consecutive: 3
+      one_place: {}
+      block_total_zero_or_full: {}
+      no_half_non_ir5: {}
+      blocked: {}
+      forced: {}
+      track_requirements: {}
+      ir5_mh_min_per_block: {}
+      first_timer: {}
+      no_sequential_year1_3: {}
+requirements:
+  IR1:
+    MH-IR: 1.0
+    MH-CT/US: 0.0
+    48X-IR: 1.0
+    48X-CT/US: 1.0
+    KIR: 0.0
+  IR2:
+    MH-IR: 2.0
+    MH-CT/US: 0.0
+    48X-IR: 0.5
+    48X-CT/US: 0.5
+    KIR: 0.0
+  IR3:
+    MH-IR: 1.0
+    MH-CT/US: 0.0
+    48X-IR: 1.0
+    48X-CT/US: 1.0
+    KIR: 0.0
+  IR4:
+    MH-IR: 2.0
+    MH-CT/US: 0.0
+    48X-IR: 1.0
+    48X-CT/US: 0.0
+    KIR: 3.0
+  IR5:
+    MH-IR: 7.0
+    MH-CT/US: 0.0
+    48X-IR: 3.0
+    48X-CT/US: 0.0
+    KIR: 3.0
+  DR1:
+    MH-IR: 1.0
+    MH-CT/US: 0.0
+    48X-IR: 0.0
+    48X-CT/US: 0.0
+    KIR: 0.0
+  DR2:
+    MH-IR: 0.0
+    MH-CT/US: 1.0
+    48X-IR: 0.0
+    48X-CT/US: 0.0
+    KIR: 0.0
+  DR3:
+    MH-IR: 0.0
+    MH-CT/US: 0.0
+    48X-IR: 0.0
+    48X-CT/US: 1.0
+    KIR: 0.0
+residents:
+- id: Gaburak
+  track: IR1
+- id: Miller
+  track: IR1
+- id: Qi
+  track: IR2
+- id: Verst
+  track: IR2
+- id: Madsen
+  track: IR3
+- id: Mahmoud
+  track: IR3
+- id: Javan
+  track: IR4
+- id: Virk
+  track: IR4
+- id: Brock
+  track: IR5
+- id: Katz
+  track: IR5
+- id: DR1-1
+  track: DR1
+- id: DR1-2
+  track: DR1
+- id: DR1-3
+  track: DR1
+- id: DR1-4
+  track: DR1
+- id: DR1-5
+  track: DR1
+- id: DR1-6
+  track: DR1
+- id: DR1-7
+  track: DR1
+- id: DR1-8
+  track: DR1
+- id: DR2-1
+  track: DR2
+- id: DR2-2
+  track: DR2
+- id: DR2-3
+  track: DR2
+- id: DR2-4
+  track: DR2
+- id: DR2-5
+  track: DR2
+- id: DR2-6
+  track: DR2
+- id: DR2-7
+  track: DR2
+- id: DR3-1
+  track: DR3
+- id: DR3-2
+  track: DR3
+- id: DR3-3
+  track: DR3
+- id: DR3-4
+  track: DR3
+- id: DR3-5
+  track: DR3
+- id: DR3-6
+  track: DR3
+- id: DR3-7
+  track: DR3
+- id: DR3-8
+  track: DR3

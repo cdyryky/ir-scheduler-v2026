@@ -294,15 +294,29 @@ def _parse_requirements(data: dict, num_blocks: int) -> Dict[str, Dict[str, int]
                     )
                 units = int(round(fte_value * 2))
             else:
-                if not isinstance(value, int):
+                blocks: int | None = None
+                # YAML emitted by the GUI may serialize whole-number DR requirements as floats (e.g., 0.0).
+                if isinstance(value, bool):
+                    blocks = None
+                elif isinstance(value, int):
+                    blocks = value
+                elif isinstance(value, float) and value.is_integer():
+                    blocks = int(value)
+                elif isinstance(value, str):
+                    try:
+                        blocks = int(value)
+                    except ValueError:
+                        blocks = None
+
+                if blocks is None:
                     raise ScheduleError(
                         f"Requirements for {track} {rot} must be a non-negative integer."
                     )
-                if value < 0:
+                if blocks < 0:
                     raise ScheduleError(
                         f"Requirements for {track} {rot} must be a non-negative integer."
                     )
-                units = 2 * value
+                units = 2 * blocks
             if units > 2 * num_blocks:
                 raise ScheduleError(
                     f"Requirements for {track} {rot} exceed number of blocks ({num_blocks})."
