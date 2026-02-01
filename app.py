@@ -1068,7 +1068,7 @@ with tabs[3]:
         # Fallback
         return (spec.label, "")
 
-    def _render_spec_mode(spec, title: str, description: str, *, allow_try: bool) -> None:
+    def _render_spec_mode(spec, title: str, *, allow_try: bool):
         mode_display = {
             "always": "On (hard)",
             "if_able": "Try (soft)",
@@ -1092,7 +1092,7 @@ with tabs[3]:
             key=f"mode_{spec.id}",
         )
         modes[spec.id] = selection
-        st.caption(description)
+        return selection, st.empty()
 
     def _params_for(spec_id: str) -> dict:
         raw = params.get(spec_id)
@@ -1316,16 +1316,21 @@ with tabs[3]:
                 else:
                     if spec.id not in ids:
                         continue
+
+                spec_params = _params_for(spec.id)
+                title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                _selection, desc_slot = _render_spec_mode(spec, title=title, allow_try=allow_try)
+
                 if tab_name in {"Coverage & Caps", "Track Rules", "Preferences"}:
-                    spec_params = _params_for(spec.id)
-                    title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
-                    _render_spec_mode(spec, title=title, description=description, allow_try=allow_try)
                     _render_spec_params(spec, num_blocks=num_blocks)
+                    spec_params = _params_for(spec.id)
+                    _title2, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                    if description:
+                        desc_slot.caption(description)
                     st.divider()
                 else:
-                    spec_params = _params_for(spec.id)
-                    title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
-                    _render_spec_mode(spec, title=title, description=description, allow_try=allow_try)
+                    if description:
+                        desc_slot.caption(description)
 
     cfg["gui"]["constraints"]["modes"] = modes
 
