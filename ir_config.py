@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Tuple
+
+import yaml
 
 
 IR_TRACKS = ["IR1", "IR2", "IR3", "IR4", "IR5"]
@@ -40,6 +43,15 @@ def default_gui_residents() -> dict:
 
 
 def default_config() -> dict:
+    default_path = Path(__file__).with_name("schedule-config-2026-01-31.yml")
+    try:
+        if default_path.exists():
+            loaded = yaml.safe_load(default_path.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                return loaded
+    except Exception:
+        pass
+
     return {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "blocks": 13,

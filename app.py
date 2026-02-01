@@ -1638,24 +1638,18 @@ table.{table_class} th {{
             if not result.solutions:
                 st.warning("No solutions returned (unexpected without infeasibility diagnostic).")
             else:
-                idx = st.selectbox(
-                    "Solution",
-                    options=list(range(len(result.solutions))),
-                    format_func=lambda i: f"Solution {i}",
-                    key="solution_select",
-                )
+                pick_col, dl_table_col, dl_long_col = st.columns([2.3, 1.2, 1.2], gap="small")
+                with pick_col:
+                    idx = st.selectbox(
+                        "Solution",
+                        options=list(range(len(result.solutions))),
+                        format_func=lambda i: f"Solution {i}",
+                        key="solution_select",
+                    )
                 sol = result.solutions[int(idx)]
                 schedule_input = st.session_state.get("solve_input")
-                if schedule_input is not None:
-                    st.markdown("**Objective (lower is better)**")
-                    obj_df, obj_total = _objective_breakdown(sol.objective or {}, schedule_input.weights)
-                    st.metric("Weighted objective score", obj_total)
-                    if not obj_df.empty:
-                        st.dataframe(obj_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.caption("No soft penalties in this solution.")
 
-                st.markdown("**Assignments by Rotation**")
+                csv_text = st.session_state.get("solve_csv", "")
                 blocks = _block_labels(cfg)
                 if not blocks:
                     blocks = list(next(iter(sol.assignments.values())).keys()) if sol.assignments else []
@@ -1680,6 +1674,35 @@ table.{table_class} th {{
                     rot_rows.append(row)
 
                 rot_df = pd.DataFrame(rot_rows, columns=["Rotation"] + blocks)
+                table_csv_text = rot_df.to_csv(index=False)
+
+                with dl_table_col:
+                    dl_table_col.download_button(
+                        "Download CSV (Table)",
+                        data=table_csv_text,
+                        file_name=f"schedule-table-solution-{int(idx)}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+                with dl_long_col:
+                    if csv_text:
+                        dl_long_col.download_button(
+                            "Download CSV (Long)",
+                            data=csv_text,
+                            file_name="schedule-output.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
+                if schedule_input is not None:
+                    st.markdown("**Objective (lower is better)**")
+                    obj_df, obj_total = _objective_breakdown(sol.objective or {}, schedule_input.weights)
+                    st.metric("Weighted objective score", obj_total)
+                    if not obj_df.empty:
+                        st.dataframe(obj_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("No soft penalties in this solution.")
+
+                st.markdown("**Assignments by Rotation**")
                 html_df = rot_df.copy()
                 for col in html_df.columns:
                     html_df[col] = html_df[col].apply(
@@ -1688,8 +1711,6 @@ table.{table_class} th {{
                         else ""
                     )
                 _render_html_table(html_df, table_class="assignments-table", escape_cells=False)
-
-                table_csv_text = rot_df.to_csv(index=False)
 
                 if schedule_input is not None:
                     ir_totals_df = _ir_totals_table(sol, schedule_input)
@@ -1802,26 +1823,6 @@ table.{table_class} th {{
                             use_container_width=True,
                             hide_index=True,
                         )
-
-        csv_text = st.session_state.get("solve_csv", "")
-        if result is not None and getattr(result, "solutions", None):
-            col_table, col_long = st.columns(2)
-            if "table_csv_text" in locals():
-                col_table.download_button(
-                    "Download CSV (Table)",
-                    data=table_csv_text,
-                    file_name=f"schedule-table-solution-{int(idx)}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
-            if csv_text:
-                col_long.download_button(
-                    "Download CSV (Long)",
-                    data=csv_text,
-                    file_name="schedule-output.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
 
 with tabs[6]:
     st.subheader("Save/Load Configuration")
