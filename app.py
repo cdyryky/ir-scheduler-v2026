@@ -1638,13 +1638,14 @@ table.{table_class} th {{
             if not result.solutions:
                 st.warning("No solutions returned (unexpected without infeasibility diagnostic).")
             else:
-                pick_col, dl_table_col, dl_long_col = st.columns([2.3, 1.2, 1.2], gap="small")
+                pick_col, dl_col = st.columns([2.3, 2.4], gap="small")
                 with pick_col:
                     idx = st.selectbox(
                         "Solution",
                         options=list(range(len(result.solutions))),
                         format_func=lambda i: f"Solution {i}",
                         key="solution_select",
+                        label_visibility="collapsed",
                     )
                 sol = result.solutions[int(idx)]
                 schedule_input = st.session_state.get("solve_input")
@@ -1676,27 +1677,26 @@ table.{table_class} th {{
                 rot_df = pd.DataFrame(rot_rows, columns=["Rotation"] + blocks)
                 table_csv_text = rot_df.to_csv(index=False)
 
-                with dl_table_col:
-                    dl_table_col.download_button(
+                with dl_col:
+                    b1, b2 = st.columns(2, gap="small")
+                    b1.download_button(
                         "Download CSV (Table)",
                         data=table_csv_text,
                         file_name=f"schedule-table-solution-{int(idx)}.csv",
                         mime="text/csv",
                         use_container_width=True,
                     )
-                with dl_long_col:
-                    if csv_text:
-                        dl_long_col.download_button(
-                            "Download CSV (Long)",
-                            data=csv_text,
-                            file_name="schedule-output.csv",
-                            mime="text/csv",
-                            use_container_width=True,
-                        )
+                    b2.download_button(
+                        "Download CSV (Long)",
+                        data=csv_text or "",
+                        file_name="schedule-output.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        disabled=not bool(csv_text),
+                    )
                 if schedule_input is not None:
-                    st.markdown("**Objective (lower is better)**")
                     obj_df, obj_total = _objective_breakdown(sol.objective or {}, schedule_input.weights)
-                    st.metric("Weighted objective score", obj_total)
+                    st.markdown(f"**Weighted objective score (lower is better): {obj_total}**")
                     if not obj_df.empty:
                         st.dataframe(obj_df, use_container_width=True, hide_index=True)
                     else:
