@@ -85,6 +85,7 @@ gui:
       one_place: always
       block_total_zero_or_full: always
       no_half_non_ir5: always
+      no_half_kir: always
       blocked: always
       forced: always
       coverage_48x_ir: always
@@ -97,9 +98,11 @@ gui:
       ir4_plus_mh_cap: always
       dr1_early_block: always
       ir3_late_block: always
-      first_timer: if_able
-      consec_full_mh: if_able
-      no_sequential_year1_3: if_able
+      holiday_block_staffing: always
+      viva_block_staffing: always
+      first_timer: always
+      consec_full_mh: always
+      no_sequential_year1_3: always
     soft_priority:
     - first_timer
     - consec_full_mh
@@ -128,11 +131,19 @@ gui:
         rotations:
         - MH-IR
         - 48X-IR
+      holiday_block_staffing:
+        block: 6
+        min_residents: 4
+      viva_block_staffing:
+        block: 4
+        min_residents: 4
+        min_dr_residents: 3
       consec_full_mh:
         max_consecutive: 3
       one_place: {}
       block_total_zero_or_full: {}
       no_half_non_ir5: {}
+      no_half_kir: {}
       blocked: {}
       forced: {}
       track_requirements: {}

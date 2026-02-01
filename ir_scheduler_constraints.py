@@ -287,6 +287,73 @@ def _add_ir3_late_block_restrictions(ctx: ConstraintContext, assumption: Optiona
                 _enforce(ctx.model.Add(ctx.u[(resident_id, b, rot)] == 0), assumption)
 
 
+def _mh_any_in_block(
+    ctx: ConstraintContext,
+    *,
+    resident_id: str,
+    block: int,
+    spec_id: str,
+    assumption: Optional[cp_model.BoolVar],
+) -> cp_model.BoolVar:
+    mh_any = ctx.model.NewBoolVar(f"{spec_id}_mh_any_{resident_id}_{block}")
+    mh_units = ctx.u[(resident_id, block, "MH-IR")] + ctx.u[(resident_id, block, "MH-CT/US")]
+    _enforce(ctx.model.Add(mh_units >= 1), assumption).OnlyEnforceIf(mh_any)
+    _enforce(ctx.model.Add(mh_units == 0), assumption).OnlyEnforceIf(mh_any.Not())
+    return mh_any
+
+
+def _add_holiday_block_staffing(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    block = _coerce_int(
+        ctx.constraint_param("holiday_block_staffing", "block", 6),
+        6,
+        min_value=0,
+        max_value=max(0, ctx.num_blocks - 1),
+    )
+    min_residents = _coerce_int(
+        ctx.constraint_param("holiday_block_staffing", "min_residents", 4),
+        4,
+        min_value=0,
+    )
+    mh_any_vars = [
+        _mh_any_in_block(ctx, resident_id=res.resident_id, block=block, spec_id="holiday_block_staffing", assumption=assumption)
+        for res in ctx.schedule_input.residents
+    ]
+    _enforce(ctx.model.Add(sum(mh_any_vars) >= min_residents), assumption)
+
+
+def _add_viva_block_staffing(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    block = _coerce_int(
+        ctx.constraint_param("viva_block_staffing", "block", 4),
+        4,
+        min_value=0,
+        max_value=max(0, ctx.num_blocks - 1),
+    )
+    min_residents = _coerce_int(
+        ctx.constraint_param("viva_block_staffing", "min_residents", 4),
+        4,
+        min_value=0,
+    )
+    min_dr_residents = _coerce_int(
+        ctx.constraint_param("viva_block_staffing", "min_dr_residents", 3),
+        3,
+        min_value=0,
+    )
+    mh_any_by_resident = {
+        res.resident_id: _mh_any_in_block(
+            ctx,
+            resident_id=res.resident_id,
+            block=block,
+            spec_id="viva_block_staffing",
+            assumption=assumption,
+        )
+        for res in ctx.schedule_input.residents
+    }
+
+    dr_ids = list(ctx.groups.get("DR1", [])) + list(ctx.groups.get("DR2", [])) + list(ctx.groups.get("DR3", []))
+    _enforce(ctx.model.Add(sum(mh_any_by_resident.values()) >= min_residents), assumption)
+    _enforce(ctx.model.Add(sum(mh_any_by_resident[rid] for rid in dr_ids if rid in mh_any_by_resident) >= min_dr_residents), assumption)
+
+
 def _add_first_timer_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
     first_timer = ctx.first_timer()
     for b in range(ctx.num_blocks):
@@ -473,6 +540,20 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         add_hard=_add_ir3_late_block_restrictions,
     ),
     ConstraintSpec(
+        id="holiday_block_staffing",
+        label="Holiday block staffing",
+        softenable=False,
+        impact=45,
+        add_hard=_add_holiday_block_staffing,
+    ),
+    ConstraintSpec(
+        id="viva_block_staffing",
+        label="VIVA block staffing",
+        softenable=False,
+        impact=45,
+        add_hard=_add_viva_block_staffing,
+    ),
+    ConstraintSpec(
         id="first_timer",
         label="Limit first-timer MH-IR to 1 per block",
         softenable=True,
@@ -507,10 +588,12 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
 
 SPEC_BY_ID = {spec.id: spec for spec in CONSTRAINT_SPECS}
 
-CORE_RULE_IDS = {"one_place", "block_total_zero_or_full", "no_half_non_ir5", "no_half_kir"}
+CORE_RULE_IDS = {"one_place", "block_total_zero_or_full", "no_half_non_ir5"}
 
 
 def _default_mode_for_spec(spec: ConstraintSpec) -> str:
+    if spec.id in {"first_timer", "consec_full_mh", "no_sequential_year1_3"}:
+        return "always"
     return "if_able" if spec.softenable else "always"
 
 

@@ -68,7 +68,13 @@ def default_config() -> dict:
                 track: dict(DEFAULT_CLASS_REQUIREMENTS[track]) for track in CLASS_TRACKS
             },
             "constraints": {
-                "modes": {},
+                "modes": {
+                    "holiday_block_staffing": "always",
+                    "viva_block_staffing": "always",
+                    "first_timer": "always",
+                    "consec_full_mh": "always",
+                    "no_sequential_year1_3": "always",
+                },
                 "soft_priority": [],
                 "params": {
                     "coverage_48x_ir": {"op": "==", "target_units": 2},
@@ -79,6 +85,8 @@ def default_config() -> dict:
                     "ir4_plus_mh_cap": {"ir_min_year": 4, "max_fte": 2},
                     "dr1_early_block": {"first_n_blocks": 4},
                     "ir3_late_block": {"after_block": 7, "rotations": ["MH-IR", "48X-IR"]},
+                    "holiday_block_staffing": {"block": 6, "min_residents": 4},
+                    "viva_block_staffing": {"block": 4, "min_residents": 4, "min_dr_residents": 3},
                     "consec_full_mh": {"max_consecutive": 3},
                 },
             },

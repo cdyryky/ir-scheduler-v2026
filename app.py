@@ -940,6 +940,19 @@ with tabs[3]:
     cfg["gui"]["constraints"]["params"] = params
 
     def _constraint_title_and_description(spec, spec_params: dict, num_blocks: int) -> tuple[str, str]:
+        def _block_label_with_dates(block_idx: int) -> str:
+            block_labels = _block_labels(cfg)
+            if not block_labels:
+                return f"B{block_idx}"
+            if block_idx < 0 or block_idx >= len(block_labels):
+                return "None"
+            block = str(block_labels[block_idx])
+            ranges = _block_date_ranges(cfg, block_labels)
+            r = ranges.get(block)
+            if not r:
+                return block
+            return f"{block} ({_format_mmddyy(r[0])} - {_format_mmddyy(r[1])})"
+
         if spec.id == "one_place":
             return (
                 "One rotation per resident per block",
@@ -964,6 +977,11 @@ with tabs[3]:
             return (
                 "No half-block assignments for DR",
                 "DR residents must take full 1.0 FTE rotations within a block.",
+            )
+        if spec.id == "no_half_kir":
+            return (
+                "No half assignments on KIR",
+                "Prevents 0.5-block KIR assignments (KIR must be 0 or 1.0 FTE).",
             )
         if spec.id == "coverage_48x_ir":
             op = str(spec_params.get("op", "=="))
@@ -1048,6 +1066,38 @@ with tabs[3]:
                 "IR-3 core studying",
                 f"IR-3s not assigned to {rots_text} after block {after_label} (block {after_label} allowed).",
             )
+        if spec.id == "holiday_block_staffing":
+            try:
+                block_idx = int(spec_params.get("block", 6) or 0)
+            except Exception:
+                block_idx = 6
+            try:
+                min_residents = int(spec_params.get("min_residents", 4) or 0)
+            except Exception:
+                min_residents = 4
+            block_label = _block_label_with_dates(block_idx)
+            return (
+                "Holiday block staffing",
+                f"Ensure block {block_label} MH (IR + CT/US) has at least {min_residents} resident(s).",
+            )
+        if spec.id == "viva_block_staffing":
+            try:
+                block_idx = int(spec_params.get("block", 4) or 0)
+            except Exception:
+                block_idx = 4
+            try:
+                min_residents = int(spec_params.get("min_residents", 4) or 0)
+            except Exception:
+                min_residents = 4
+            try:
+                min_dr = int(spec_params.get("min_dr_residents", 3) or 0)
+            except Exception:
+                min_dr = 3
+            block_label = _block_label_with_dates(block_idx)
+            return (
+                "VIVA block staffing",
+                f"Ensure block {block_label} MH (IR + CT/US) has at least {min_residents} resident(s), {min_dr} of which are DR.",
+            )
         if spec.id == "first_timer":
             return (
                 "First-timer MH-IR limit",
@@ -1069,6 +1119,7 @@ with tabs[3]:
         return (spec.label, "")
 
     def _render_spec_mode(spec, title: str, *, allow_try: bool):
+        preference_default_on = {"first_timer", "consec_full_mh", "no_sequential_year1_3"}
         mode_display = {
             "always": "On (hard)",
             "if_able": "Try (soft)",
@@ -1079,7 +1130,12 @@ with tabs[3]:
         else:
             options = ["always", "disabled"]
 
-        default_mode = modes.get(spec.id, "if_able" if spec.softenable else "always")
+        if spec.id in {"holiday_block_staffing", "viva_block_staffing"} and spec.id not in modes:
+            default_mode = "always"
+        elif spec.id in preference_default_on and spec.id not in modes:
+            default_mode = "always"
+        else:
+            default_mode = modes.get(spec.id, "if_able" if spec.softenable else "always")
         if default_mode not in options:
             default_mode = "always"
 
@@ -1210,6 +1266,102 @@ with tabs[3]:
             )
             p["first_n_blocks"] = int(sel)
 
+        elif spec.id == "holiday_block_staffing":
+            p = _params_for(spec.id)
+            block_labels = _block_labels(cfg) or [f"B{i}" for i in range(num_blocks)]
+            block_ranges = _block_date_ranges(cfg, block_labels)
+            options = list(range(len(block_labels)))
+
+            block_idx = p.get("block", 6)
+            if not isinstance(block_idx, int):
+                block_idx = 6
+            block_idx = min(max(0, block_idx), max(0, len(block_labels) - 1))
+
+            def _fmt_block(i: int) -> str:
+                blk = str(block_labels[i])
+                r = block_ranges.get(blk)
+                if not r:
+                    return blk
+                return f"{blk} ({_format_mmddyy(r[0])} - {_format_mmddyy(r[1])})"
+
+            sel_block = st.selectbox(
+                "Block",
+                options=options,
+                index=options.index(block_idx) if block_idx in options else 0,
+                format_func=_fmt_block,
+                key="cparam_holiday_block_staffing_block",
+            )
+            p["block"] = int(sel_block)
+
+            min_residents = p.get("min_residents", 4)
+            if not isinstance(min_residents, int) or min_residents < 0:
+                min_residents = 4
+            p["min_residents"] = int(
+                st.number_input(
+                    "Min residents at MH (MH-IR + MH-CT/US)",
+                    min_value=0,
+                    max_value=50,
+                    value=int(min_residents),
+                    step=1,
+                    key="cparam_holiday_block_staffing_min_residents",
+                )
+            )
+
+        elif spec.id == "viva_block_staffing":
+            p = _params_for(spec.id)
+            block_labels = _block_labels(cfg) or [f"B{i}" for i in range(num_blocks)]
+            block_ranges = _block_date_ranges(cfg, block_labels)
+            options = list(range(len(block_labels)))
+
+            block_idx = p.get("block", 4)
+            if not isinstance(block_idx, int):
+                block_idx = 4
+            block_idx = min(max(0, block_idx), max(0, len(block_labels) - 1))
+
+            def _fmt_block(i: int) -> str:
+                blk = str(block_labels[i])
+                r = block_ranges.get(blk)
+                if not r:
+                    return blk
+                return f"{blk} ({_format_mmddyy(r[0])} - {_format_mmddyy(r[1])})"
+
+            sel_block = st.selectbox(
+                "Block",
+                options=options,
+                index=options.index(block_idx) if block_idx in options else 0,
+                format_func=_fmt_block,
+                key="cparam_viva_block_staffing_block",
+            )
+            p["block"] = int(sel_block)
+
+            min_residents = p.get("min_residents", 4)
+            if not isinstance(min_residents, int) or min_residents < 0:
+                min_residents = 4
+            p["min_residents"] = int(
+                st.number_input(
+                    "Min residents at MH (MH-IR + MH-CT/US)",
+                    min_value=0,
+                    max_value=50,
+                    value=int(min_residents),
+                    step=1,
+                    key="cparam_viva_block_staffing_min_residents",
+                )
+            )
+
+            min_dr = p.get("min_dr_residents", 3)
+            if not isinstance(min_dr, int) or min_dr < 0:
+                min_dr = 3
+            p["min_dr_residents"] = int(
+                st.number_input(
+                    "Min DR residents at MH (MH-IR + MH-CT/US)",
+                    min_value=0,
+                    max_value=50,
+                    value=int(min_dr),
+                    step=1,
+                    key="cparam_viva_block_staffing_min_dr_residents",
+                )
+            )
+
         elif spec.id == "ir3_late_block":
             p = _params_for(spec.id)
             after_block = p.get("after_block", 7)
@@ -1283,7 +1435,7 @@ with tabs[3]:
             p["max_consecutive"] = int(sel)
 
     categories = {
-        "Core Rules": {"one_place", "block_total_zero_or_full", "no_half_non_ir5"},
+        "Core Rules": {"one_place", "block_total_zero_or_full", "no_half_non_ir5", "no_half_kir"},
         "Requests": {"blocked", "forced"},
         "Coverage & Caps": {
             "coverage_48x_ir",
@@ -1296,12 +1448,11 @@ with tabs[3]:
             "track_requirements",
         },
         "Track Rules": {"dr1_early_block", "ir3_late_block"},
+        "Special Blocks": {"holiday_block_staffing", "viva_block_staffing"},
         "Preferences": {"first_timer", "consec_full_mh", "no_sequential_year1_3"},
     }
 
-    used_ids = set().union(*categories.values()) if categories else set()
-    other_ids = [spec.id for spec in CONSTRAINT_SPECS if spec.id not in used_ids]
-    tab_names = list(categories.keys()) + (["Other"] if other_ids else [])
+    tab_names = list(categories.keys())
     sub_tabs = st.tabs(tab_names)
 
     num_blocks = _num_blocks(cfg)
@@ -1310,18 +1461,15 @@ with tabs[3]:
             ids = categories.get(tab_name, set())
             allow_try = tab_name != "Core Rules"
             for spec in CONSTRAINT_SPECS:
-                if tab_name == "Other":
-                    if spec.id not in other_ids:
-                        continue
-                else:
-                    if spec.id not in ids:
-                        continue
+                if spec.id not in ids:
+                    continue
 
                 spec_params = _params_for(spec.id)
                 title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
-                _selection, desc_slot = _render_spec_mode(spec, title=title, allow_try=allow_try)
+                spec_allow_try = allow_try or spec.id == "no_half_kir"
+                _selection, desc_slot = _render_spec_mode(spec, title=title, allow_try=spec_allow_try)
 
-                if tab_name in {"Coverage & Caps", "Track Rules", "Preferences"}:
+                if tab_name in {"Coverage & Caps", "Track Rules", "Special Blocks", "Preferences"}:
                     _render_spec_params(spec, num_blocks=num_blocks)
                     spec_params = _params_for(spec.id)
                     _title2, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
