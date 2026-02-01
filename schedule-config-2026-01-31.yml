@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 blocks: 13
 blocked: {}
 forced: {}
@@ -8,6 +8,8 @@ weights:
   adj: 1
 num_solutions: 1
 gui:
+  calendar:
+    start_date: 06/29/26
   residents:
     IR:
       IR1:

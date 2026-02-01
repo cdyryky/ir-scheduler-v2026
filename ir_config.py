@@ -32,7 +32,9 @@ DEFAULT_CLASS_REQUIREMENTS = {
     "DR3": {"MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 1, "KIR": 0},
 }
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
+
+DEFAULT_CALENDAR_START_DATE = "06/29/26"
 
 
 def default_gui_residents() -> dict:
@@ -61,6 +63,7 @@ def default_config() -> dict:
         "num_solutions": 1,
         "gui": {
             "residents": default_gui_residents(),
+            "calendar": {"start_date": DEFAULT_CALENDAR_START_DATE},
             "class_year_requirements": {
                 track: dict(DEFAULT_CLASS_REQUIREMENTS[track]) for track in CLASS_TRACKS
             },
@@ -102,6 +105,11 @@ def migrate_config(cfg: Any) -> dict:
     if version < 1:
         cfg["schema_version"] = 1
         version = 1
+
+    # v1 -> v2: Calendar start date now lives under gui.calendar.start_date.
+    if version < 2:
+        cfg["schema_version"] = 2
+        version = 2
 
     cfg["schema_version"] = CURRENT_SCHEMA_VERSION
     return cfg
@@ -194,6 +202,13 @@ def normalize_config(cfg: Any) -> Tuple[dict, bool]:
     gui_constraints.setdefault("params", {})
     if not isinstance(gui_constraints.get("params"), dict):
         gui_constraints["params"] = {}
+
+    gui_calendar = gui.setdefault("calendar", {})
+    if not isinstance(gui_calendar, dict):
+        gui_calendar = {}
+        gui["calendar"] = gui_calendar
+    start_date = gui_calendar.get("start_date")
+    gui_calendar["start_date"] = str(start_date) if isinstance(start_date, str) and start_date.strip() else DEFAULT_CALENDAR_START_DATE
 
     # Ensure GUI requirements exist (used for the editable table), even if YAML only has solver-level requirements.
     if "class_year_requirements" not in gui:

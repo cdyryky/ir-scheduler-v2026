@@ -2,9 +2,10 @@ from typing import Optional
 
 import os
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 import math
 import html
+import re
 
 import streamlit as st
 import yaml
@@ -204,6 +205,78 @@ def _track_counts(cfg: dict) -> dict:
     return counts
 
 
+def _parse_mmddyy(value: str) -> Optional[date]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    m = re.match(r"^\s*(\d{1,2})[/-](\d{1,2})[/-](\d{2})\s*$", text)
+    if m:
+        mm, dd, yy = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    else:
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if len(digits) != 6:
+            return None
+        mm, dd, yy = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
+
+    year = 2000 + yy
+    try:
+        return date(year, mm, dd)
+    except ValueError:
+        return None
+
+
+def _format_mmddyy(d: date) -> str:
+    return f"{d.month:02d}/{d.day:02d}/{d.year % 100:02d}"
+
+
+def _calendar_start_date(cfg: dict) -> Optional[date]:
+    gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else {}
+    cal = gui.get("calendar") if isinstance(gui.get("calendar"), dict) else {}
+    return _parse_mmddyy(str(cal.get("start_date", "") or ""))
+
+
+def _block_date_ranges(cfg: dict, block_labels: list[str]) -> dict[str, tuple[date, date]]:
+    start = _calendar_start_date(cfg)
+    if not start:
+        return {}
+    out: dict[str, tuple[date, date]] = {}
+    for idx, block in enumerate(block_labels):
+        b_start = start + timedelta(days=28 * idx)
+        b_end = b_start + timedelta(days=27)
+        out[str(block)] = (b_start, b_end)
+    return out
+
+
+def _block_display_labels(cfg: dict, block_labels: list[str]) -> dict[str, str]:
+    ranges = _block_date_ranges(cfg, block_labels)
+    out: dict[str, str] = {}
+    for block in block_labels:
+        r = ranges.get(str(block))
+        if not r:
+            out[str(block)] = str(block)
+        else:
+            out[str(block)] = f"{block} ({_format_mmddyy(r[0])} - {_format_mmddyy(r[1])})"
+    return out
+
+
+def _render_block_label_cell(container, block: str, r: Optional[tuple[date, date]]) -> None:
+    safe_block = html.escape(str(block))
+    if not r:
+        container.markdown(f"**{safe_block}**")
+        return
+    safe_dates = html.escape(f"{_format_mmddyy(r[0])} - {_format_mmddyy(r[1])}")
+    container.markdown(
+        f"""
+<div style="line-height: 1.15;">
+  <div><strong>{safe_block}</strong></div>
+  <div style="font-size: 0.85em; color: rgba(120, 120, 120, 0.95);">{safe_dates}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 st.markdown(
@@ -321,6 +394,7 @@ tabs = st.tabs(
         "Constraints",
         "Prioritization",
         "Solve",
+        "Calendar",
         "Save/Load Configuration",
     ]
 )
@@ -595,6 +669,7 @@ with tabs[2]:
     )
 
     block_labels = _block_labels(cfg)
+    block_ranges = _block_date_ranges(cfg, block_labels)
     ir_rows = _ir_resident_rows(cfg)
     forced_set = _forced_set(cfg, block_labels)
     blocked_set = _blocked_set(cfg, block_labels)
@@ -668,7 +743,7 @@ with tabs[2]:
                 forced_rot = current_on_by_block.get(block, "")
 
                 cols = st.columns([1.2, 0.9, 0.9] + [1.0] * len(ROTATION_COLUMNS) + [1.1])
-                cols[0].write(block)
+                _render_block_label_cell(cols[0], str(block), block_ranges.get(str(block)))
 
                 if cols[1].button("All", key=f"requests_off_all_{k_res}_{k_blk}", use_container_width=True):
                     for rot in ROTATION_COLUMNS:
@@ -740,7 +815,7 @@ with tabs[2]:
                     current = ""
 
                 cols = st.columns([1.2, 4.0])
-                cols[0].write(block)
+                _render_block_label_cell(cols[0], str(block), block_ranges.get(str(block)))
                 cols[1].selectbox(
                     "Rotation",
                     options=options,
@@ -1654,6 +1729,8 @@ table.{table_class} th {{
                 blocks = _block_labels(cfg)
                 if not blocks:
                     blocks = list(next(iter(sol.assignments.values())).keys()) if sol.assignments else []
+                block_display = _block_display_labels(cfg, blocks)
+                display_blocks = [block_display.get(b, b) for b in blocks]
 
                 rot_rows = []
                 for rot in ROTATION_COLUMNS:
@@ -1671,10 +1748,10 @@ table.{table_class} th {{
                             if float(fte) != 1.0:
                                 name = f"{name} ({_fmt_fte(float(fte))})"
                             assigned.append(name)
-                        row[block] = "\n".join(sorted(assigned, key=lambda s: s.casefold()))
+                        row[block_display.get(block, block)] = "\n".join(sorted(assigned, key=lambda s: s.casefold()))
                     rot_rows.append(row)
 
-                rot_df = pd.DataFrame(rot_rows, columns=["Rotation"] + blocks)
+                rot_df = pd.DataFrame(rot_rows, columns=["Rotation"] + display_blocks)
                 table_csv_text = rot_df.to_csv(index=False)
 
                 with dl_col:
@@ -1825,6 +1902,48 @@ table.{table_class} th {{
                         )
 
 with tabs[6]:
+    st.subheader("Calendar")
+    st.caption("Choose the start date for block B0. Each block is 4 weeks (28 days).")
+
+    gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else {}
+    cal = gui.get("calendar") if isinstance(gui.get("calendar"), dict) else {}
+    cfg.setdefault("gui", {}).setdefault("calendar", {})
+
+    default_start = _calendar_start_date(cfg) or date(2026, 6, 29)
+    if "calendar_start_date_picker" not in st.session_state:
+        st.session_state["calendar_start_date_picker"] = default_start
+
+    st.date_input(
+        "Pick start date",
+        key="calendar_start_date_picker",
+    )
+
+    picked = st.session_state.get("calendar_start_date_picker")
+    if not isinstance(picked, date):
+        picked = default_start
+        st.session_state["calendar_start_date_picker"] = picked
+
+    cfg["gui"]["calendar"]["start_date"] = _format_mmddyy(picked)
+
+    block_labels = _block_labels(cfg)
+    block_ranges = _block_date_ranges(cfg, block_labels)
+    start_row = {"Date": "Start"}
+    end_row = {"Date": "End"}
+    for blk in block_labels:
+        r = block_ranges.get(blk)
+        if not r:
+            start_row[blk] = ""
+            end_row[blk] = ""
+        else:
+            start_row[blk] = _format_mmddyy(r[0])
+            end_row[blk] = _format_mmddyy(r[1])
+    st.dataframe(
+        pd.DataFrame([start_row, end_row], columns=["Date"] + block_labels),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+with tabs[7]:
     st.subheader("Save/Load Configuration")
 
     def _reset_widget_state() -> None:
@@ -1832,6 +1951,7 @@ with tabs[6]:
             "ir_",
             "dr_",
             "requests_",
+            "calendar_",
             "cparam_",
             "mode_",
             "prio_",

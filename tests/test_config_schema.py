@@ -3,6 +3,7 @@ import unittest
 from ir_config import (
     CLASS_TRACKS,
     CURRENT_SCHEMA_VERSION,
+    DEFAULT_CALENDAR_START_DATE,
     DEFAULT_DR_COUNTS,
     DEFAULT_IR_NAMES,
     ROTATION_COLUMNS,
@@ -16,6 +17,8 @@ class ConfigSchemaTests(unittest.TestCase):
         self.assertEqual(cfg.get("schema_version"), CURRENT_SCHEMA_VERSION)
         self.assertIn("gui", cfg)
         self.assertIn("residents", cfg["gui"])
+        self.assertIn("calendar", cfg["gui"])
+        self.assertEqual(cfg["gui"]["calendar"]["start_date"], DEFAULT_CALENDAR_START_DATE)
         self.assertIn("forced", cfg)
         self.assertFalse(ok)
 
