@@ -15,6 +15,38 @@ from ir_scheduler import (
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_no_sequential_year1_3_allows_split_within_block(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["one_place"] = "always"
+        modes["block_total_zero_or_full"] = "always"
+        modes["track_requirements"] = "always"
+        modes["no_sequential_year1_3"] = "always"
+
+        # IR2 has half-block requirements, which forces a 0.5/0.5 split within a single block.
+        data = {
+            "blocks": 2,
+            "residents": [{"id": "ir2a", "track": "IR2"}],
+            "requirements": {
+                "DR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0.5, "48X-CT/US": 0.5},
+                "IR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR4": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR5": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+            },
+            "gui": {"constraints": {"modes": modes}},
+        }
+
+        with tempfile.NamedTemporaryFile("w+", suffix=".yml", delete=False) as handle:
+            yaml.safe_dump(data, handle, sort_keys=False)
+            path = handle.name
+
+        schedule_input = load_schedule_input(path)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+
     def test_expand_residents_defaults(self):
         gui = {
             "IR": {

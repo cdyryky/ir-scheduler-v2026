@@ -399,11 +399,19 @@ def _add_consec_full_mh_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
 
 
 def _add_no_sequential_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    # This is about *blocks*, not rotations within a block. A resident may have multiple rotations in a
+    # single block (e.g., 0.5 + 0.5 split), and that should still count as "assigned in the block".
     for resident_id in ctx.groups["YEAR1_3"]:
         for b in range(ctx.num_blocks - 1):
+            any_b = ctx.model.NewBoolVar(f"any_assign_{resident_id}_{b}")
+            any_next = ctx.model.NewBoolVar(f"any_assign_{resident_id}_{b+1}")
             sum_b = sum(ctx.p[(resident_id, b, rot)] for rot in ROTATIONS)
             sum_next = sum(ctx.p[(resident_id, b + 1, rot)] for rot in ROTATIONS)
-            _enforce(ctx.model.Add(sum_b + sum_next <= 1), assumption)
+            _enforce(ctx.model.Add(sum_b >= 1), assumption).OnlyEnforceIf(any_b)
+            _enforce(ctx.model.Add(sum_b == 0), assumption).OnlyEnforceIf(any_b.Not())
+            _enforce(ctx.model.Add(sum_next >= 1), assumption).OnlyEnforceIf(any_next)
+            _enforce(ctx.model.Add(sum_next == 0), assumption).OnlyEnforceIf(any_next.Not())
+            _enforce(ctx.model.Add(any_b + any_next <= 1), assumption)
 
 
 def _add_no_sequential_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
