@@ -185,6 +185,7 @@ def _extract_solution(
     schedule_input: ScheduleInput,
     u: Dict[Tuple[str, int, str], cp_model.IntVar],
     penalties: Dict[str, List[cp_model.IntVar]],
+    relax_var_by_id: Dict[str, cp_model.BoolVar],
 ) -> Solution:
     assignments: Dict[str, Dict[str, Dict[str, float]]] = {}
     for resident in schedule_input.residents:
@@ -204,6 +205,12 @@ def _extract_solution(
             continue
         objective[spec.objective_key] = int(sum(solver.Value(var) for var in penalties.get(spec.id, [])))
 
+    relaxed_ids = [cid for cid, var in relax_var_by_id.items() if int(solver.Value(var)) == 1]
+    if relaxed_ids:
+        objective["try_relaxations"] = int(len(relaxed_ids))
+        for cid in sorted(relaxed_ids, key=lambda s: str(s).casefold()):
+            objective[f"relax_{cid}"] = 1
+
     return Solution(assignments=assignments, objective=objective)
 
 
@@ -215,7 +222,9 @@ def solve_schedule(
 ) -> SolveResult:
     model = cp_model.CpModel()
     u, p = _build_variables(model, schedule_input.residents, schedule_input.block_labels)
-    penalties, assumption_index_map, assumption_var_map, relax_terms = _apply_constraints(model, schedule_input, u, p)
+    penalties, assumption_index_map, assumption_var_map, relax_terms, relax_var_by_id = _apply_constraints(
+        model, schedule_input, u, p
+    )
 
     solver = cp_model.CpSolver()
 
@@ -304,7 +313,7 @@ def solve_schedule(
         last_status = status
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             break
-        solutions.append(_extract_solution(solver, schedule_input, u, penalties))
+        solutions.append(_extract_solution(solver, schedule_input, u, penalties, relax_var_by_id))
         lits = []
         for resident in schedule_input.residents:
             for b in range(len(schedule_input.block_labels)):
@@ -331,4 +340,3 @@ def solve_schedule(
         )
 
     return SolveResult(solutions, None)
-

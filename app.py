@@ -1853,28 +1853,36 @@ with tabs[5]:
         return text
 
     def _objective_breakdown(sol_objective: dict, weights: dict) -> tuple[pd.DataFrame, int]:
-        label_by_key = {
-            "consec": "Consecutive full MH blocks",
-            "first_timer": "First-timer assignments",
+        # Solver stores objective counts under each constraint's objective_key
+        # (e.g., "consec_excess"), while weights are keyed separately (e.g., "consec").
+        label_by_objective_key = {
+            "consec_excess": "Consecutive full MH blocks",
+            "first_timer_excess": "First-timer assignments",
             "adj": "Adjacent assignments (Y1–Y3)",
         }
-        weight_by_key = {
-            "consec": int(weights.get("consec", 0)),
-            "first_timer": int(weights.get("first_timer", 0)),
+        weight_by_objective_key = {
+            "consec_excess": int(weights.get("consec", 0)),
+            "first_timer_excess": int(weights.get("first_timer", 0)),
             "adj": int(weights.get("adj", 0)),
         }
         rows = []
         total = 0
-        for key, label in label_by_key.items():
-            count = int(sol_objective.get(key, 0) or 0)
-            weight = int(weight_by_key.get(key, 0))
+        for objective_key, label in label_by_objective_key.items():
+            count = int(sol_objective.get(objective_key, 0) or 0)
+            weight = int(weight_by_objective_key.get(objective_key, 0))
             weighted = count * weight
             if count:
                 rows.append({"Penalty": label, "Count": count, "Weight": weight, "Weighted": weighted})
             total += weighted
 
         extra_keys = sorted(
-            [k for k in sol_objective.keys() if k not in label_by_key],
+            [
+                k
+                for k in sol_objective.keys()
+                if k not in label_by_objective_key
+                and k != "try_relaxations"
+                and not str(k).startswith("relax_")
+            ],
             key=lambda s: str(s).casefold(),
         )
         for key in extra_keys:
@@ -2065,10 +2073,30 @@ table.{table_class} th {{
                 if schedule_input is not None:
                     obj_df, obj_total = _objective_breakdown(sol.objective or {}, schedule_input.weights)
                     st.markdown(f"**Weighted objective score (lower is better): {obj_total}**")
+                    relaxed_ids = sorted(
+                        [k[len("relax_") :] for k in (sol.objective or {}).keys() if str(k).startswith("relax_")],
+                        key=lambda s: str(s).casefold(),
+                    )
                     if not obj_df.empty:
                         st.dataframe(obj_df, use_container_width=True, hide_index=True)
                     else:
-                        st.caption("No soft penalties in this solution.")
+                        if relaxed_ids:
+                            st.caption("No weighted soft penalties in this solution (some Try-mode hard constraints were relaxed below).")
+                        else:
+                            st.caption("No soft penalties in this solution.")
+                    if relaxed_ids:
+                        label_by_id = {spec.id: spec.label for spec in CONSTRAINT_SPECS}
+                        st.warning(
+                            f"Relaxed {len(relaxed_ids)} Try-mode hard constraint(s) to find a feasible schedule."
+                        )
+                        st.dataframe(
+                            pd.DataFrame(
+                                [{"Constraint": label_by_id.get(cid, cid), "Id": cid} for cid in relaxed_ids],
+                                columns=["Constraint", "Id"],
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
                 st.markdown("**Assignments by Rotation**")
                 html_df = rot_df.copy()

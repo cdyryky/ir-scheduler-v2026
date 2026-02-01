@@ -611,6 +611,7 @@ def _apply_constraints(
     Dict[int, ConstraintSpec],
     Dict[int, cp_model.BoolVar],
     List[tuple[cp_model.IntVar, int]],
+    Dict[str, cp_model.BoolVar],
 ]:
     groups = _resident_groups(schedule_input.residents)
     ctx = ConstraintContext(
@@ -626,6 +627,7 @@ def _apply_constraints(
     assumption_index_map: Dict[int, ConstraintSpec] = {}
     assumption_var_map: Dict[int, cp_model.BoolVar] = {}
     relax_terms: List[tuple[cp_model.IntVar, int]] = []
+    relax_var_by_id: Dict[str, cp_model.BoolVar] = {}
 
     for spec in CONSTRAINT_SPECS:
         mode = _constraint_mode(spec, schedule_input.constraint_modes)
@@ -645,6 +647,7 @@ def _apply_constraints(
             relaxed = model.NewBoolVar(f"relax_{spec.id}")
             model.Add(assumption + relaxed == 1)
             relax_terms.append((relaxed, 1))
+            relax_var_by_id[spec.id] = relaxed
             continue
 
         assumption = model.NewBoolVar(f"a_{spec.id}")
@@ -653,4 +656,4 @@ def _apply_constraints(
         assumption_var_map[assumption.Index()] = assumption
         spec.add_hard(ctx, assumption)
 
-    return penalties, assumption_index_map, assumption_var_map, relax_terms
+    return penalties, assumption_index_map, assumption_var_map, relax_terms, relax_var_by_id
