@@ -940,31 +940,30 @@ with tabs[3]:
     cfg["gui"]["constraints"]["params"] = params
 
     def _constraint_title_and_description(spec, spec_params: dict, num_blocks: int) -> tuple[str, str]:
-        hard_or_pref = "Preference" if spec.softenable else "Hard constraint"
         if spec.id == "one_place":
             return (
                 "One rotation per resident per block",
-                f"{hard_or_pref}. Prevents a resident from being scheduled in multiple places in the same block.",
+                "Prevents a resident from being scheduled in multiple places in the same block.",
             )
         if spec.id == "blocked":
             return (
                 "Honor Off requests",
-                f"{hard_or_pref}. Enforces the Off selections from the Requests tab.",
+                "Enforces the Off selections from the Requests tab.",
             )
         if spec.id == "forced":
             return (
                 "Honor On requests",
-                f"{hard_or_pref}. Enforces the On selections from the Requests tab.",
+                "Enforces the On selections from the Requests tab.",
             )
         if spec.id == "block_total_zero_or_full":
             return (
                 "Block totals must be 0 or 1.0 FTE",
-                f"{hard_or_pref}. If a resident is scheduled in a block, they must total 1.0 FTE; otherwise 0.",
+                "If a resident is scheduled in a block, they must total 1.0 FTE; otherwise 0.",
             )
         if spec.id == "no_half_non_ir5":
             return (
                 "No half-block assignments for DR",
-                f"{hard_or_pref}. DR residents must take full 1.0 FTE rotations within a block.",
+                "DR residents must take full 1.0 FTE rotations within a block.",
             )
         if spec.id == "coverage_48x_ir":
             op = str(spec_params.get("op", "=="))
@@ -976,7 +975,7 @@ with tabs[3]:
             op_text = {"<=": "at most", "==": "exactly", ">=": "at least"}.get(op, "exactly")
             return (
                 "48X-IR coverage per block",
-                f"{hard_or_pref}. Requires {op_text} {target_fte}.0 FTE of 48X-IR each block.",
+                f"Requires {op_text} {target_fte}.0 FTE of 48X-IR each block.",
             )
         if spec.id == "coverage_48x_ctus":
             op = str(spec_params.get("op", "=="))
@@ -988,76 +987,86 @@ with tabs[3]:
             op_text = {"<=": "at most", "==": "exactly", ">=": "at least"}.get(op, "exactly")
             return (
                 "48X-CT/US coverage per block",
-                f"{hard_or_pref}. Requires {op_text} {target_fte}.0 FTE of 48X-CT/US each block.",
+                f"Requires {op_text} {target_fte}.0 FTE of 48X-CT/US each block.",
             )
         if spec.id == "mh_total_minmax":
             min_fte = spec_params.get("min_fte", 3)
             max_fte = spec_params.get("max_fte", 4)
             return (
                 "MH total coverage per block",
-                f"{hard_or_pref}. Combined MH-IR + MH-CT/US must be between {min_fte}.0 and {max_fte}.0 FTE per block.",
+                f"Combined MH-IR + MH-CT/US must be between {min_fte}.0 and {max_fte}.0 FTE per block.",
             )
         if spec.id == "mh_ctus_cap":
             max_fte = spec_params.get("max_fte", 1)
             return (
                 "MH-CT/US cap per block",
-                f"{hard_or_pref}. Limits MH-CT/US to at most {max_fte}.0 FTE per block.",
+                f"Limits MH-CT/US to at most {max_fte}.0 FTE per block.",
             )
         if spec.id == "kir_cap":
             max_fte = spec_params.get("max_fte", 2)
             return (
                 "KIR cap per block",
-                f"{hard_or_pref}. Limits KIR to at most {max_fte}.0 FTE per block.",
+                f"Limits KIR to at most {max_fte}.0 FTE per block.",
             )
         if spec.id == "track_requirements":
             return (
                 "Per-class rotation totals",
-                f"{hard_or_pref}. Uses the Class/Year Assignments tab to enforce total blocks per resident (IR/DR class).",
+                "Uses the Class/Year Assignments tab to enforce total blocks per resident (IR/DR class).",
             )
         if spec.id == "ir5_mh_min_per_block":
             return (
                 "IR5 MH-IR minimum per block",
-                f"{hard_or_pref}. Ensures at least 1.0 FTE of IR5 MH-IR coverage per block.",
+                "Ensures at least 1.0 FTE of IR5 MH-IR coverage per block.",
             )
         if spec.id == "ir4_plus_mh_cap":
             ir_min_year = spec_params.get("ir_min_year", 4)
             max_fte = spec_params.get("max_fte", 2)
             return (
                 "Limit senior residents on MH-IR per block",
-                f"{hard_or_pref}. 'Senior' means IR{ir_min_year}+; cap is {max_fte}.0 FTE per block.",
+                f"'Senior' means IR{ir_min_year}+; cap is {max_fte}.0 FTE per block.",
             )
         if spec.id == "dr1_early_block":
             first_n = spec_params.get("first_n_blocks", 4)
             return (
                 "Keep DR1 off MH-IR early",
-                f"{hard_or_pref}. DR1 cannot do MH-IR in the first {first_n} block(s).",
+                f"DR1 cannot do MH-IR in the first {first_n} block(s).",
             )
         if spec.id == "ir3_late_block":
             after_block = spec_params.get("after_block", 7)
-            after_label = f"B{after_block}" if after_block <= num_blocks else "the end"
+            rots = spec_params.get("rotations", ["MH-IR", "48X-IR"])
+            if not isinstance(rots, list):
+                rots = ["MH-IR", "48X-IR"]
+            rots = [str(r) for r in rots if str(r)]
+            rots_text = ", ".join(rots) if rots else "specified rotations"
+            if isinstance(after_block, int) and after_block >= num_blocks:
+                return (
+                    "IR-3 core studying",
+                    f"No restrictions (Block N set to None).",
+                )
+            after_label = f"B{after_block}" if isinstance(after_block, int) else "the selected block"
             return (
-                "Keep IR3 off MH-IR / 48X-IR late",
-                f"{hard_or_pref}. Starting at {after_label}, IR3 cannot do MH-IR or 48X-IR.",
+                "IR-3 core studying",
+                f"IR-3s not assigned to {rots_text} after block {after_label} (block {after_label} allowed).",
             )
         if spec.id == "first_timer":
             return (
                 "First-timer MH-IR limit",
-                f"{hard_or_pref}. Limits first-time MH-IR residents (DR1/IR1) to 1 per block.",
+                "Limits first-time MH-IR residents (DR1/IR1) to 1 per block.",
             )
         if spec.id == "consec_full_mh":
             max_consecutive = spec_params.get("max_consecutive", 3)
             return (
                 "Avoid consecutive full MH-IR blocks",
-                f"{hard_or_pref}. Prevents (or discourages) runs of {max_consecutive} full MH-IR blocks in a row.",
+                f"Prevents (or discourages) runs of {max_consecutive} full MH-IR blocks in a row.",
             )
         if spec.id == "no_sequential_year1_3":
             return (
                 "No back-to-back blocks for years 1–3",
-                f"{hard_or_pref}. Prevents residents in years 1–3 (DR1–3, IR1–3) from being scheduled in consecutive blocks.",
+                "Prevents residents in years 1–3 (DR1–3, IR1–3) from being scheduled in consecutive blocks.",
             )
 
         # Fallback
-        return (spec.label, f"{hard_or_pref}.")
+        return (spec.label, "")
 
     def _render_spec_mode(spec, title: str, description: str, *, allow_try: bool) -> None:
         mode_display = {
@@ -1206,15 +1215,57 @@ with tabs[3]:
             after_block = p.get("after_block", 7)
             if not isinstance(after_block, int) or after_block < 0:
                 after_block = 7
-            options = list(range(0, num_blocks + 1))
+
+            block_labels = _block_labels(cfg)
+            if not block_labels:
+                block_labels = [f"B{i}" for i in range(num_blocks)]
+
+            options = list(range(0, len(block_labels) + 1))
+            none_label = "None (no restriction)"
+
+            def _fmt_after(idx: int) -> str:
+                return block_labels[idx] if idx < len(block_labels) else none_label
+
+            after_block = min(after_block, len(block_labels))
+            after_key = "cparam_ir3_late_block_after_block"
+            stored_after = st.session_state.get(after_key, after_block)
+            if not isinstance(stored_after, int):
+                stored_after = after_block
+            stored_after = min(max(0, stored_after), len(block_labels))
+            st.session_state[after_key] = stored_after
+
             sel = st.selectbox(
-                "After block #",
+                "Block N (last allowed)",
                 options=options,
-                index=options.index(after_block) if after_block in options else options.index(min(7, num_blocks)),
-                help="Restrictions apply starting at the next block (e.g., 7 means starting at block 8).",
-                key="cparam_ir3_late_block_after_block",
+                index=options.index(stored_after) if stored_after in options else options.index(after_block),
+                format_func=_fmt_after,
+                help="IR-3s may still be assigned in block N. Restrictions apply starting at block N+1.",
+                key=after_key,
             )
             p["after_block"] = int(sel)
+
+            if "rotations" in p:
+                raw_rots = p.get("rotations", [])
+            else:
+                raw_rots = ["MH-IR", "48X-IR"]
+            if not isinstance(raw_rots, list):
+                raw_rots = ["MH-IR", "48X-IR"]
+            current = [str(r) for r in raw_rots if str(r) in ROTATION_COLUMNS]
+
+            rot_key = "cparam_ir3_late_block_rotations"
+            stored_rots = st.session_state.get(rot_key, current)
+            if not isinstance(stored_rots, list):
+                stored_rots = current
+            stored_rots = [str(r) for r in stored_rots if str(r) in ROTATION_COLUMNS]
+            if rot_key not in st.session_state:
+                st.session_state[rot_key] = stored_rots
+
+            p["rotations"] = st.multiselect(
+                "Rotations blocked after N",
+                options=ROTATION_COLUMNS,
+                key=rot_key,
+                help="Defaults to MH-IR and 48X-IR.",
+            )
 
         elif spec.id == "consec_full_mh":
             p = _params_for(spec.id)

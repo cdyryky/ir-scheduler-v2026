@@ -125,6 +125,9 @@ gui:
         first_n_blocks: 4
       ir3_late_block:
         after_block: 7
+        rotations:
+        - MH-IR
+        - 48X-IR
       consec_full_mh:
         max_consecutive: 3
       one_place: {}

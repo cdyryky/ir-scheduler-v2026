@@ -265,12 +265,26 @@ def _add_dr1_early_block_mh_prohibited(ctx: ConstraintContext, assumption: Optio
 
 
 def _add_ir3_late_block_restrictions(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    after_block = _coerce_int(ctx.constraint_param("ir3_late_block", "after_block", 7), 7, min_value=0)
-    start_b = min(after_block, ctx.num_blocks)
+    after_block = _coerce_int(
+        ctx.constraint_param("ir3_late_block", "after_block", 7),
+        7,
+        min_value=0,
+        max_value=ctx.num_blocks,
+    )
+    raw_rots = ctx.constraint_param("ir3_late_block", "rotations", ["MH-IR", "48X-IR"])
+    if isinstance(raw_rots, list):
+        rotations = [str(r) for r in raw_rots if str(r) in ROTATIONS]
+    elif isinstance(raw_rots, str):
+        rotations = [raw_rots] if raw_rots in ROTATIONS else []
+    else:
+        rotations = ["MH-IR", "48X-IR"]
+
+    # "After block N (block N allowed)" => restrictions apply starting at block N+1.
+    start_b = min(after_block + 1, ctx.num_blocks)
     for resident_id in ctx.groups["IR3"]:
         for b in range(start_b, ctx.num_blocks):
-            _enforce(ctx.model.Add(ctx.u[(resident_id, b, "MH-IR")] == 0), assumption)
-            _enforce(ctx.model.Add(ctx.u[(resident_id, b, "48X-IR")] == 0), assumption)
+            for rot in rotations:
+                _enforce(ctx.model.Add(ctx.u[(resident_id, b, rot)] == 0), assumption)
 
 
 def _add_first_timer_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
@@ -453,7 +467,7 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
     ),
     ConstraintSpec(
         id="ir3_late_block",
-        label="IR3 no MH-IR or 48X-IR in late blocks",
+        label="IR-3 core studying",
         softenable=False,
         impact=15,
         add_hard=_add_ir3_late_block_restrictions,

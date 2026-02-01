@@ -78,7 +78,7 @@ def default_config() -> dict:
                     "kir_cap": {"max_fte": 2},
                     "ir4_plus_mh_cap": {"ir_min_year": 4, "max_fte": 2},
                     "dr1_early_block": {"first_n_blocks": 4},
-                    "ir3_late_block": {"after_block": 7},
+                    "ir3_late_block": {"after_block": 7, "rotations": ["MH-IR", "48X-IR"]},
                     "consec_full_mh": {"max_consecutive": 3},
                 },
             },
