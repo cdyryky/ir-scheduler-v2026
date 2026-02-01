@@ -1641,7 +1641,63 @@ with tabs[5]:
                 if schedule_input is not None:
                     ir_totals_df = _ir_totals_table(sol, schedule_input)
                     if not ir_totals_df.empty:
-                        from matplotlib import colormaps, colors
+                        _viridis = [
+                            "#440154",
+                            "#482878",
+                            "#3e4989",
+                            "#31688e",
+                            "#26828e",
+                            "#1f9e89",
+                            "#35b779",
+                            "#6ece58",
+                            "#b5de2b",
+                            "#fde725",
+                        ]
+                        _greys = [
+                            "#000000",
+                            "#1f1f1f",
+                            "#3b3b3b",
+                            "#585858",
+                            "#767676",
+                            "#969696",
+                            "#b8b8b8",
+                            "#d9d9d9",
+                            "#f0f0f0",
+                            "#ffffff",
+                        ]
+
+                        def _hex_to_rgb01(hex_color: str) -> tuple[float, float, float]:
+                            h = hex_color.lstrip("#")
+                            r = int(h[0:2], 16) / 255.0
+                            g = int(h[2:4], 16) / 255.0
+                            b = int(h[4:6], 16) / 255.0
+                            return r, g, b
+
+                        def _rgb01_to_hex(rgb: tuple[float, float, float]) -> str:
+                            r, g, b = rgb
+                            return "#{:02x}{:02x}{:02x}".format(
+                                int(max(0, min(1, r)) * 255),
+                                int(max(0, min(1, g)) * 255),
+                                int(max(0, min(1, b)) * 255),
+                            )
+
+                        def _lerp(a: float, b: float, t: float) -> float:
+                            return a + (b - a) * t
+
+                        def _palette_hex(palette: list[str], t: float) -> str:
+                            if not palette:
+                                return "#ffffff"
+                            if len(palette) == 1:
+                                return palette[0]
+                            t = max(0.0, min(1.0, float(t)))
+                            pos = t * (len(palette) - 1)
+                            idx = int(pos)
+                            if idx >= len(palette) - 1:
+                                return palette[-1]
+                            frac = pos - idx
+                            r1, g1, b1 = _hex_to_rgb01(palette[idx])
+                            r2, g2, b2 = _hex_to_rgb01(palette[idx + 1])
+                            return _rgb01_to_hex((_lerp(r1, r2, frac), _lerp(g1, g2, frac), _lerp(b1, b2, frac)))
 
                         numeric_cols = ROTATION_COLUMNS + ["Total"]
                         rot_cols = ROTATION_COLUMNS
@@ -1657,10 +1713,7 @@ with tabs[5]:
                         total_vmin = float(total_nonzero.min()) if total_nonzero.size else 0.0
                         total_vmax = float(total_nonzero.max()) if total_nonzero.size else 0.0
 
-                        cmap_rot = colormaps.get_cmap("viridis")
-                        cmap_total = colormaps.get_cmap("Greys")
-
-                        def _bg_from(value: int | float | None, vmin: float, vmax: float, cmap) -> str:
+                        def _bg_from(value: int | float | None, vmin: float, vmax: float, palette: list[str]) -> str:
                             if value is None or pd.isna(value):
                                 return ""
                             v = float(value)
@@ -1668,18 +1721,17 @@ with tabs[5]:
                                 return ""
                             t = 0.5 if math.isclose(vmin, vmax) else (v - vmin) / (vmax - vmin)
                             t = max(0.0, min(1.0, float(t)))
-                            rgba = cmap(t)
-                            hex_color = colors.to_hex(rgba, keep_alpha=False)
-                            r, g, b = colors.to_rgb(hex_color)
+                            hex_color = _palette_hex(palette, t)
+                            r, g, b = _hex_to_rgb01(hex_color)
                             luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
                             text = "#111111" if luminance > 0.55 else "#ffffff"
                             return f"background-color: {hex_color}; color: {text}; font-weight: 600;"
 
                         def _bg_rot(value: int | float | None) -> str:
-                            return _bg_from(value, rot_vmin, rot_vmax, cmap_rot)
+                            return _bg_from(value, rot_vmin, rot_vmax, _viridis)
 
                         def _bg_total(value: int | float | None) -> str:
-                            return _bg_from(value, total_vmin, total_vmax, cmap_total)
+                            return _bg_from(value, total_vmin, total_vmax, _greys)
 
                         def _fmt_cell(value: int | float | None) -> str:
                             if value is None or pd.isna(value):
