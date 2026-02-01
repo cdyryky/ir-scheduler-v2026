@@ -1,0 +1,2 @@
+ROTATIONS = ["KIR", "MH-IR", "MH-CT/US", "48X-IR", "48X-CT/US"]
+
