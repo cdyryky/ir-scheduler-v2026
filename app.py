@@ -388,7 +388,7 @@ with tabs[1]:
     for track in CLASS_TRACKS:
         total_blocks = sum(updated_req[track][rot] for rot in ROTATION_COLUMNS)
         if not math.isclose(total_blocks, round(total_blocks)):
-            non_integer_tracks.append(f"{track} ({total_blocks})")
+            non_integer_tracks.append(f"{track} ({total_blocks:.1f})")
     if non_integer_tracks:
         st.warning(
             "Total blocks must be a whole number before solving. "
@@ -426,7 +426,11 @@ with tabs[1]:
         return "background-color: #e9f7ef; font-weight: 600;"
 
     st.dataframe(
-        display_df.style.map(_shade_zero, subset=ROTATION_COLUMNS + ["Total Blocks"]),
+        display_df.style.map(_shade_zero, subset=ROTATION_COLUMNS + ["Total Blocks"]).format(
+            "{:.1f}",
+            subset=ROTATION_COLUMNS + ["Total Blocks"],
+            na_rep="",
+        ),
         use_container_width=True,
         hide_index=True,
     )
@@ -502,7 +506,11 @@ with tabs[1]:
 
     rotation_display = rotation_df[["Rotation", "Available", "Required"]]
     st.dataframe(
-        rotation_display.style.apply(_make_row_style(rotation_df), axis=1),
+        rotation_display.style.apply(_make_row_style(rotation_df), axis=1).format(
+            "{:.1f}",
+            subset=["Available"],
+            na_rep="",
+        ),
         use_container_width=True,
         hide_index=True,
     )
@@ -531,7 +539,11 @@ with tabs[1]:
     )
     location_display = location_df[["Location", "Available", "Required"]]
     st.dataframe(
-        location_display.style.apply(_make_row_style(location_df), axis=1),
+        location_display.style.apply(_make_row_style(location_df), axis=1).format(
+            "{:.1f}",
+            subset=["Available"],
+            na_rep="",
+        ),
         use_container_width=True,
         hide_index=True,
     )
