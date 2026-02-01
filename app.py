@@ -1671,8 +1671,7 @@ table.{table_class} th {{
         )
     )
 
-    col_run, col_dl = st.columns([1, 1])
-    run = col_run.button("Solve", type="primary", use_container_width=True)
+    run = st.button("Solve", type="primary", use_container_width=True, key="solve_btn")
 
     if run:
         st.session_state.pop("solve_result", None)
