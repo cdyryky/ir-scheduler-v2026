@@ -195,6 +195,29 @@ class SchedulerTests(unittest.TestCase):
         with self.assertRaises(ScheduleError):
             load_schedule_input(path)
 
+    def test_ir_kir_requirement_cannot_be_half(self):
+        data = {
+            "blocks": 1,
+            "residents": [{"id": "ir1a", "track": "IR1"}],
+            "requirements": {
+                "DR1": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "DR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR1": {"KIR": 0.5, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR2": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR3": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR4": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+                "IR5": {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0},
+            },
+        }
+
+        with tempfile.NamedTemporaryFile("w+", suffix=".yml", delete=False) as handle:
+            yaml.safe_dump(data, handle, sort_keys=False)
+            path = handle.name
+
+        with self.assertRaises(ScheduleError):
+            load_schedule_input(path)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -128,7 +128,13 @@ def _normalize_class_year_requirements(value: Any) -> dict:
             raw = row.get(rot, defaults.get(rot, 0))
             if track in IR_TRACKS:
                 try:
-                    normalized_row[rot] = max(0.0, round(float(raw) * 2) / 2)
+                    if rot == "KIR":
+                        normalized_value = max(0.0, float(int(round(float(raw)))))
+                    else:
+                        normalized_value = max(0.0, round(float(raw) * 2) / 2)
+                    normalized_row[rot] = (
+                        int(normalized_value) if float(normalized_value).is_integer() else float(normalized_value)
+                    )
                 except (TypeError, ValueError):
                     normalized_row[rot] = float(defaults.get(rot, 0))
             else:

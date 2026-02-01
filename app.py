@@ -368,7 +368,7 @@ with tabs[1]:
                 "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
                 "48X-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
                 "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
-                "KIR": st.column_config.NumberColumn(min_value=0, step=0.5),
+                "KIR": st.column_config.NumberColumn(min_value=0, step=1.0),
                 "Total Blocks": st.column_config.NumberColumn(disabled=True),
             },
             key="class_year_table",
@@ -393,6 +393,19 @@ with tabs[1]:
         st.warning(
             "Total blocks must be a whole number before solving. "
             f"Check: {', '.join(non_integer_tracks)}"
+        )
+
+    non_whole_kir_tracks = []
+    for track in CLASS_TRACKS:
+        if not track.startswith("IR"):
+            continue
+        kir = float(updated_req.get(track, {}).get("KIR", 0) or 0)
+        if not math.isclose(kir, round(kir)):
+            non_whole_kir_tracks.append(f"{track} (KIR={kir:.1f})")
+    if non_whole_kir_tracks:
+        st.warning(
+            "KIR requirements must be a whole number (no 0.5 blocks). "
+            f"Check: {', '.join(non_whole_kir_tracks)}"
         )
 
     requirements = {}
@@ -1440,6 +1453,12 @@ with tabs[5]:
     st.subheader("Solve")
     st.caption("Runs the solver using the current in-app configuration (no YAML download required).")
 
+    def _fmt_fte(value: float) -> str:
+        text = f"{float(value):.1f}"
+        if text.endswith(".0"):
+            return text[:-2]
+        return text
+
     cfg["num_solutions"] = int(
         st.number_input(
             "Number of solutions",
@@ -1457,6 +1476,7 @@ with tabs[5]:
     if run:
         st.session_state.pop("solve_result", None)
         st.session_state.pop("solve_csv", None)
+        st.session_state.pop("solve_input", None)
         try:
             schedule_input = load_schedule_input_from_data(cfg)
         except Exception as exc:
@@ -1466,6 +1486,7 @@ with tabs[5]:
                 result = solve_schedule(schedule_input)
             st.session_state["solve_result"] = result
             st.session_state["solve_csv"] = result_to_csv(result)
+            st.session_state["solve_input"] = schedule_input
 
     result = st.session_state.get("solve_result")
     if result is None:
@@ -1501,6 +1522,43 @@ with tabs[5]:
                 st.markdown("**Objective**")
                 st.json(sol.objective)
 
+                schedule_input = st.session_state.get("solve_input")
+                if schedule_input is not None:
+                    ir_rows = []
+                    for resident in schedule_input.residents:
+                        if not isinstance(resident.track, str) or not resident.track.startswith("IR"):
+                            continue
+                        totals: dict[str, float] = {}
+                        blocks_map = sol.assignments.get(resident.resident_id, {})
+                        if not isinstance(blocks_map, dict):
+                            continue
+                        for block_assignments in blocks_map.values():
+                            if not isinstance(block_assignments, dict):
+                                continue
+                            for rot, fte in block_assignments.items():
+                                if not rot:
+                                    continue
+                                try:
+                                    totals[str(rot)] = totals.get(str(rot), 0.0) + float(fte)
+                                except (TypeError, ValueError):
+                                    continue
+
+                        parts = []
+                        for rot in ROTATION_COLUMNS:
+                            total = totals.get(rot, 0.0)
+                            if abs(float(total)) < 1e-9:
+                                continue
+                            parts.append(f"{rot}: {_fmt_fte(float(total))}")
+                        if parts:
+                            ir_rows.append({"Resident": resident.resident_id, "Totals": "\n".join(parts)})
+                    if ir_rows:
+                        ir_totals_df = pd.DataFrame(
+                            sorted(ir_rows, key=lambda r: str(r["Resident"]).casefold()),
+                            columns=["Resident", "Totals"],
+                        )
+                        st.markdown("**IR resident rotation totals**")
+                        st.dataframe(ir_totals_df, use_container_width=True, hide_index=True)
+
                 st.markdown("**Assignments by Rotation (rotations as rows)**")
                 blocks = _block_labels(cfg)
                 if not blocks:
@@ -1520,9 +1578,9 @@ with tabs[5]:
                                 continue
                             name = str(resident)
                             if float(fte) != 1.0:
-                                name = f"{name} ({fte})"
+                                name = f"{name} ({_fmt_fte(float(fte))})"
                             assigned.append(name)
-                        row[block] = ", ".join(sorted(assigned, key=lambda s: s.casefold()))
+                        row[block] = "\n".join(sorted(assigned, key=lambda s: s.casefold()))
                     rot_rows.append(row)
 
                 rot_df = pd.DataFrame(rot_rows, columns=["Rotation"] + blocks)

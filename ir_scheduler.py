@@ -292,6 +292,10 @@ def _parse_requirements(data: dict, num_blocks: int) -> Dict[str, Dict[str, int]
                     raise ScheduleError(
                         f"Requirements for {track} {rot} must be a non-negative number."
                     )
+                if rot == "KIR" and not fte_value.is_integer():
+                    raise ScheduleError(
+                        f"Requirements for {track} {rot} must be a non-negative whole number."
+                    )
                 units = int(round(fte_value * 2))
             else:
                 blocks: int | None = None
@@ -551,6 +555,12 @@ def _add_no_half_assignments(ctx: ConstraintContext, assumption: Optional[cp_mod
                 _enforce(ctx.model.Add(ctx.u[(resident.resident_id, b, rot)] != 1), assumption)
 
 
+def _add_no_half_kir_assignments(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    for resident in ctx.schedule_input.residents:
+        for b in range(ctx.num_blocks):
+            _enforce(ctx.model.Add(ctx.u[(resident.resident_id, b, "KIR")] != 1), assumption)
+
+
 def _add_ir5_split_coupling(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
     for resident_id in ctx.groups["IR5"]:
         for b in range(ctx.num_blocks):
@@ -807,6 +817,13 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         add_hard=_add_no_half_assignments,
     ),
     ConstraintSpec(
+        id="no_half_kir",
+        label="No half assignments on KIR",
+        softenable=False,
+        impact=35,
+        add_hard=_add_no_half_kir_assignments,
+    ),
+    ConstraintSpec(
         id="coverage_48x_ir",
         label="48X-IR coverage",
         softenable=False,
@@ -911,7 +928,7 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
 
 SPEC_BY_ID = {spec.id: spec for spec in CONSTRAINT_SPECS}
 
-CORE_RULE_IDS = {"one_place", "block_total_zero_or_full", "no_half_non_ir5"}
+CORE_RULE_IDS = {"one_place", "block_total_zero_or_full", "no_half_non_ir5", "no_half_kir"}
 
 
 def _default_mode_for_spec(spec: ConstraintSpec) -> str:
