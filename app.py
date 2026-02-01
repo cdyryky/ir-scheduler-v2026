@@ -7,6 +7,7 @@ import math
 import streamlit as st
 import yaml
 import pandas as pd
+from matplotlib import cm, colors
 
 from ir_config import (
     CLASS_TRACKS,
@@ -1459,6 +1460,77 @@ with tabs[5]:
             return text[:-2]
         return text
 
+    def _objective_breakdown(sol_objective: dict, weights: dict) -> tuple[pd.DataFrame, int]:
+        label_by_key = {
+            "consec": "Consecutive full MH blocks",
+            "first_timer": "First-timer assignments",
+            "adj": "Adjacent assignments (Y1–Y3)",
+        }
+        weight_by_key = {
+            "consec": int(weights.get("consec", 0)),
+            "first_timer": int(weights.get("first_timer", 0)),
+            "adj": int(weights.get("adj", 0)),
+        }
+        rows = []
+        total = 0
+        for key, label in label_by_key.items():
+            count = int(sol_objective.get(key, 0) or 0)
+            weight = int(weight_by_key.get(key, 0))
+            weighted = count * weight
+            if count:
+                rows.append({"Penalty": label, "Count": count, "Weight": weight, "Weighted": weighted})
+            total += weighted
+
+        extra_keys = sorted(
+            [k for k in sol_objective.keys() if k not in label_by_key],
+            key=lambda s: str(s).casefold(),
+        )
+        for key in extra_keys:
+            count = int(sol_objective.get(key, 0) or 0)
+            if not count:
+                continue
+            rows.append({"Penalty": str(key), "Count": count, "Weight": "-", "Weighted": "-"})
+
+        return pd.DataFrame(rows, columns=["Penalty", "Count", "Weight", "Weighted"]), total
+
+    def _ir_totals_table(sol, schedule_input) -> pd.DataFrame:
+        track_order = {t: idx for idx, t in enumerate(IR_TRACKS)}
+        rows = []
+        for resident in schedule_input.residents:
+            if not isinstance(resident.track, str) or not resident.track.startswith("IR"):
+                continue
+            totals: dict[str, float] = {rot: 0.0 for rot in ROTATION_COLUMNS}
+            blocks_map = sol.assignments.get(resident.resident_id, {})
+            if not isinstance(blocks_map, dict):
+                continue
+            for block_assignments in blocks_map.values():
+                if not isinstance(block_assignments, dict):
+                    continue
+                for rot in ROTATION_COLUMNS:
+                    try:
+                        totals[rot] += float(block_assignments.get(rot, 0) or 0.0)
+                    except (TypeError, ValueError):
+                        continue
+            total = float(sum(totals.values()))
+            if abs(total) < 1e-9:
+                continue
+            rows.append(
+                {
+                    "Track": resident.track,
+                    "Resident": resident.resident_id,
+                    **totals,
+                    "Total": total,
+                }
+            )
+
+        rows.sort(
+            key=lambda r: (
+                track_order.get(str(r["Track"]), 999),
+                str(r["Resident"]).casefold(),
+            )
+        )
+        return pd.DataFrame(rows, columns=["Track", "Resident"] + ROTATION_COLUMNS + ["Total"])
+
     cfg["num_solutions"] = int(
         st.number_input(
             "Number of solutions",
@@ -1519,47 +1591,17 @@ with tabs[5]:
                     key="solution_select",
                 )
                 sol = result.solutions[int(idx)]
-                st.markdown("**Objective**")
-                st.json(sol.objective)
-
                 schedule_input = st.session_state.get("solve_input")
                 if schedule_input is not None:
-                    ir_rows = []
-                    for resident in schedule_input.residents:
-                        if not isinstance(resident.track, str) or not resident.track.startswith("IR"):
-                            continue
-                        totals: dict[str, float] = {}
-                        blocks_map = sol.assignments.get(resident.resident_id, {})
-                        if not isinstance(blocks_map, dict):
-                            continue
-                        for block_assignments in blocks_map.values():
-                            if not isinstance(block_assignments, dict):
-                                continue
-                            for rot, fte in block_assignments.items():
-                                if not rot:
-                                    continue
-                                try:
-                                    totals[str(rot)] = totals.get(str(rot), 0.0) + float(fte)
-                                except (TypeError, ValueError):
-                                    continue
+                    st.markdown("**Objective (lower is better)**")
+                    obj_df, obj_total = _objective_breakdown(sol.objective or {}, schedule_input.weights)
+                    st.metric("Weighted objective score", obj_total)
+                    if not obj_df.empty:
+                        st.dataframe(obj_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("No soft penalties in this solution.")
 
-                        parts = []
-                        for rot in ROTATION_COLUMNS:
-                            total = totals.get(rot, 0.0)
-                            if abs(float(total)) < 1e-9:
-                                continue
-                            parts.append(f"{rot}: {_fmt_fte(float(total))}")
-                        if parts:
-                            ir_rows.append({"Resident": resident.resident_id, "Totals": "\n".join(parts)})
-                    if ir_rows:
-                        ir_totals_df = pd.DataFrame(
-                            sorted(ir_rows, key=lambda r: str(r["Resident"]).casefold()),
-                            columns=["Resident", "Totals"],
-                        )
-                        st.markdown("**IR resident rotation totals**")
-                        st.dataframe(ir_totals_df, use_container_width=True, hide_index=True)
-
-                st.markdown("**Assignments by Rotation (rotations as rows)**")
+                st.markdown("**Assignments by Rotation**")
                 blocks = _block_labels(cfg)
                 if not blocks:
                     blocks = list(next(iter(sol.assignments.values())).keys()) if sol.assignments else []
@@ -1584,7 +1626,55 @@ with tabs[5]:
                     rot_rows.append(row)
 
                 rot_df = pd.DataFrame(rot_rows, columns=["Rotation"] + blocks)
-                st.dataframe(rot_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    rot_df.style.set_properties(**{"white-space": "pre-line"}),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                if schedule_input is not None:
+                    ir_totals_df = _ir_totals_table(sol, schedule_input)
+                    if not ir_totals_df.empty:
+                        numeric_cols = ROTATION_COLUMNS + ["Total"]
+                        nonzero = ir_totals_df[numeric_cols].to_numpy()
+                        nonzero = nonzero[nonzero > 0]
+                        vmin = float(nonzero.min()) if nonzero.size else 0.0
+                        vmax = float(nonzero.max()) if nonzero.size else 0.0
+                        cmap = cm.get_cmap("viridis")
+
+                        def _bg(value: int | float | None) -> str:
+                            if value is None or pd.isna(value):
+                                return ""
+                            v = float(value)
+                            if abs(v) < 1e-9:
+                                return ""
+                            t = 0.5 if math.isclose(vmin, vmax) else (v - vmin) / (vmax - vmin)
+                            t = max(0.0, min(1.0, float(t)))
+                            rgba = cmap(t)
+                            hex_color = colors.to_hex(rgba, keep_alpha=False)
+                            r, g, b = colors.to_rgb(hex_color)
+                            luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                            text = "#111111" if luminance > 0.55 else "#ffffff"
+                            return f"background-color: {hex_color}; color: {text}; font-weight: 600;"
+
+                        def _fmt_cell(value: int | float | None) -> str:
+                            if value is None or pd.isna(value):
+                                return ""
+                            v = float(value)
+                            if abs(v) < 1e-9:
+                                return ""
+                            return _fmt_fte(v)
+
+                        st.markdown("**IR resident rotation totals**")
+                        st.dataframe(
+                            ir_totals_df.style.map(_bg, subset=numeric_cols).format(
+                                _fmt_cell,
+                                subset=numeric_cols,
+                                na_rep="",
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
         csv_text = st.session_state.get("solve_csv", "")
         if csv_text:
