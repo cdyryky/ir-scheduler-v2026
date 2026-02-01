@@ -4,6 +4,7 @@ import os
 import tempfile
 from datetime import date
 import math
+import html
 
 import streamlit as st
 import yaml
@@ -1537,6 +1538,35 @@ with tabs[5]:
         )
         return pd.DataFrame(rows, columns=["Track", "Resident"] + ROTATION_COLUMNS + ["Total"])
 
+    def _render_html_table(df: pd.DataFrame, table_class: str = "ir-table", escape_cells: bool = True) -> None:
+        safe_df = df.copy()
+        if escape_cells:
+            for col in safe_df.columns:
+                safe_df[col] = safe_df[col].apply(lambda v: html.escape(str(v)) if v is not None else "")
+        table_html = safe_df.to_html(index=False, escape=False, classes=table_class)
+        st.markdown(
+            f"""
+<style>
+table.{table_class} {{
+  width: 100%;
+  border-collapse: collapse;
+}}
+table.{table_class} th, table.{table_class} td {{
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+  font-size: 0.92rem;
+}}
+table.{table_class} th {{
+  background: rgba(127, 127, 127, 0.10);
+  font-weight: 700;
+}}
+</style>
+{table_html}
+""",
+            unsafe_allow_html=True,
+        )
+
     cfg["num_solutions"] = int(
         st.number_input(
             "Number of solutions",
@@ -1632,11 +1662,16 @@ with tabs[5]:
                     rot_rows.append(row)
 
                 rot_df = pd.DataFrame(rot_rows, columns=["Rotation"] + blocks)
-                st.dataframe(
-                    rot_df.style.set_properties(**{"white-space": "pre-line"}),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                html_df = rot_df.copy()
+                for col in html_df.columns:
+                    html_df[col] = html_df[col].apply(
+                        lambda v: "<br>".join(html.escape(part) for part in str(v).split("\n"))
+                        if isinstance(v, str) and v
+                        else ""
+                    )
+                _render_html_table(html_df, table_class="assignments-table", escape_cells=False)
+
+                table_csv_text = rot_df.to_csv(index=False)
 
                 if schedule_input is not None:
                     ir_totals_df = _ir_totals_table(sol, schedule_input)
@@ -1751,14 +1786,24 @@ with tabs[5]:
                         )
 
         csv_text = st.session_state.get("solve_csv", "")
-        if csv_text:
-            col_dl.download_button(
-                "Download CSV",
-                data=csv_text,
-                file_name="schedule-output.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+        if result is not None and getattr(result, "solutions", None):
+            col_table, col_long = st.columns(2)
+            if "table_csv_text" in locals():
+                col_table.download_button(
+                    "Download CSV (Table)",
+                    data=table_csv_text,
+                    file_name=f"schedule-table-solution-{int(idx)}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            if csv_text:
+                col_long.download_button(
+                    "Download CSV (Long)",
+                    data=csv_text,
+                    file_name="schedule-output.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
 
 with tabs[6]:
     st.subheader("Save/Load Configuration")
