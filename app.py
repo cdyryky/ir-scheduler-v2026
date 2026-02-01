@@ -1,7 +1,6 @@
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import os
-import tempfile
 from datetime import date, timedelta
 import math
 import html
@@ -10,12 +9,6 @@ import re
 import streamlit as st
 import yaml
 import pandas as pd
-
-# Matplotlib defaults to a user home cache which may be unwritable in some environments.
-# Streamlit reruns can get sluggish if Matplotlib repeatedly creates temp caches / rebuilds font cache.
-_mpl_cache_dir = os.path.join(tempfile.gettempdir(), "ir-scheduler-mplconfig")
-os.makedirs(_mpl_cache_dir, exist_ok=True)
-os.environ.setdefault("MPLCONFIGDIR", _mpl_cache_dir)
 
 from ir_config import (
     CLASS_TRACKS,
@@ -41,6 +34,80 @@ APP_TITLE = "IR Schedulator 5000"
 
 
 DISPLAY_COLUMNS = ROTATION_COLUMNS + ["Total Blocks"]
+
+
+def _is_na(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except Exception:
+        return False
+
+
+def _render_html_dataframe(
+    df: pd.DataFrame,
+    *,
+    table_class: str,
+    escape_cells: bool = True,
+    format_cell: Optional[Callable[[str, Any], str]] = None,
+    cell_style: Optional[Callable[[int, str, Any], str]] = None,
+    row_style: Optional[Callable[[int, pd.Series], str]] = None,
+) -> None:
+    cols = list(df.columns)
+
+    def _default_format(col: str, value: Any) -> str:
+        if _is_na(value):
+            return ""
+        return str(value)
+
+    fmt = format_cell or _default_format
+
+    parts: list[str] = [
+        f"""
+<style>
+table.{table_class} {{
+  width: 100%;
+  border-collapse: collapse;
+}}
+table.{table_class} th, table.{table_class} td {{
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+  font-size: 0.92rem;
+}}
+table.{table_class} th {{
+  background: rgba(127, 127, 127, 0.10);
+  font-weight: 700;
+  text-align: left;
+}}
+</style>
+<table class="{html.escape(table_class)}">
+  <thead><tr>
+"""
+    ]
+
+    for col in cols:
+        parts.append(f"<th>{html.escape(str(col))}</th>")
+    parts.append("</tr></thead><tbody>")
+
+    for row_idx, row in df.iterrows():
+        tr_style = row_style(row_idx, row) if row_style else ""
+        tr_style_attr = f' style="{html.escape(tr_style)}"' if tr_style else ""
+        parts.append(f"<tr{tr_style_attr}>")
+        for col in cols:
+            raw = row[col]
+            text = fmt(str(col), raw)
+            if escape_cells:
+                text = html.escape(str(text))
+            td_style = cell_style(row_idx, str(col), raw) if cell_style else ""
+            td_style_attr = f' style="{html.escape(td_style)}"' if td_style else ""
+            parts.append(f"<td{td_style_attr}>{text}</td>")
+        parts.append("</tr>")
+    parts.append("</tbody></table>")
+
+    st.markdown("\n".join(parts), unsafe_allow_html=True)
+
 
 def _ensure_cfg_state():
     if "cfg" not in st.session_state:
@@ -531,21 +598,36 @@ with tabs[1]:
     for col in ROTATION_COLUMNS + ["Total Blocks"]:
         display_df[col] = pd.to_numeric(display_df[col], errors="coerce")
 
-    def _shade_zero(value: int | float | None) -> str:
-        if value is None or pd.isna(value):
+    numeric_cols = set(ROTATION_COLUMNS + ["Total Blocks"])
+
+    def _display_cell_style(_row: int, col: str, value: Any) -> str:
+        if col not in numeric_cols:
             return ""
-        if abs(float(value)) < 1e-9:
+        if _is_na(value):
+            return ""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return ""
+        if abs(v) < 1e-9:
             return "background-color: #f4f4f4; color: #8a8a8a;"
         return "background-color: #e9f7ef; font-weight: 600;"
 
-    st.dataframe(
-        display_df.style.map(_shade_zero, subset=ROTATION_COLUMNS + ["Total Blocks"]).format(
-            "{:.1f}",
-            subset=ROTATION_COLUMNS + ["Total Blocks"],
-            na_rep="",
-        ),
-        use_container_width=True,
-        hide_index=True,
+    def _display_cell_format(col: str, value: Any) -> str:
+        if col in numeric_cols:
+            if _is_na(value):
+                return ""
+            try:
+                return f"{float(value):.1f}"
+            except (TypeError, ValueError):
+                return ""
+        return "" if _is_na(value) else str(value)
+
+    _render_html_dataframe(
+        display_df,
+        table_class="class-year-summary",
+        cell_style=_display_cell_style,
+        format_cell=_display_cell_format,
     )
 
     st.markdown("**Rotation FTE availability vs. coverage**")
@@ -599,13 +681,15 @@ with tabs[1]:
         axis=1,
     )
 
-    def _make_row_style(source_df: pd.DataFrame):
-        def _row_style(row):
-            src = source_df.loc[row.name]
+    rotation_display = rotation_df[["Rotation", "Available", "Required"]]
+
+    def _req_row_style(source: pd.DataFrame) -> Callable[[int, pd.Series], str]:
+        def _style(row_idx: int, _row: pd.Series) -> str:
+            src = source.loc[row_idx]
             req_min = src["ReqMin"]
             req_max = src["ReqMax"]
             if pd.isna(req_min) and pd.isna(req_max):
-                return [""] * len(row)
+                return ""
             available = src["Available"]
             ok = True
             if pd.notna(req_min) and available < req_min:
@@ -613,19 +697,25 @@ with tabs[1]:
             if pd.notna(req_max) and available > req_max:
                 ok = False
             color = "#e9f7ef" if ok else "#fdecea"
-            return [f"background-color: {color}"] * len(row)
+            return f"background-color: {color};"
 
-        return _row_style
+        return _style
 
-    rotation_display = rotation_df[["Rotation", "Available", "Required"]]
-    st.dataframe(
-        rotation_display.style.apply(_make_row_style(rotation_df), axis=1).format(
-            "{:.1f}",
-            subset=["Available"],
-            na_rep="",
-        ),
-        use_container_width=True,
-        hide_index=True,
+    def _rotation_cell_format(col: str, value: Any) -> str:
+        if col == "Available":
+            if _is_na(value):
+                return ""
+            try:
+                return f"{float(value):.1f}"
+            except (TypeError, ValueError):
+                return ""
+        return "" if _is_na(value) else str(value)
+
+    _render_html_dataframe(
+        rotation_display,
+        table_class="rotation-availability",
+        row_style=_req_row_style(rotation_df),
+        format_cell=_rotation_cell_format,
     )
 
     st.markdown("**Location totals (per year)**")
@@ -651,14 +741,12 @@ with tabs[1]:
         axis=1,
     )
     location_display = location_df[["Location", "Available", "Required"]]
-    st.dataframe(
-        location_display.style.apply(_make_row_style(location_df), axis=1).format(
-            "{:.1f}",
-            subset=["Available"],
-            na_rep="",
-        ),
-        use_container_width=True,
-        hide_index=True,
+
+    _render_html_dataframe(
+        location_display,
+        table_class="location-availability",
+        row_style=_req_row_style(location_df),
+        format_cell=_rotation_cell_format,
     )
 
 with tabs[2]:
@@ -1892,12 +1980,24 @@ table.{table_class} th {{
                             return _fmt_fte(v)
 
                         st.markdown("**IR resident rotation totals**")
-                        st.dataframe(
-                            ir_totals_df.style.map(_bg_rot, subset=rot_cols)
-                            .map(_bg_total, subset=total_col)
-                            .format(_fmt_cell, subset=numeric_cols, na_rep=""),
-                            use_container_width=True,
-                            hide_index=True,
+
+                        def _ir_totals_cell_style(_row: int, col: str, value: Any) -> str:
+                            if col in rot_cols:
+                                return _bg_rot(value)
+                            if col in total_col:
+                                return _bg_total(value)
+                            return ""
+
+                        def _ir_totals_cell_format(col: str, value: Any) -> str:
+                            if col in numeric_cols:
+                                return _fmt_cell(value)
+                            return "" if _is_na(value) else str(value)
+
+                        _render_html_dataframe(
+                            ir_totals_df,
+                            table_class="ir-totals",
+                            cell_style=_ir_totals_cell_style,
+                            format_cell=_ir_totals_cell_format,
                         )
 
 with tabs[6]:
