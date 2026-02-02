@@ -30,7 +30,8 @@ from ir_scheduler import (
     solve_schedule,
 )
 
-APP_TITLE = "IR Scheddy Maker"
+APP_TITLE_TEXT = "SCHEDULIZER 5000"
+APP_TITLE_DISPLAY_HTML = f"<strong><em>{html.escape(APP_TITLE_TEXT)}</em></strong>"
 
 
 DISPLAY_COLUMNS = ROTATION_COLUMNS + ["Total Blocks"]
@@ -344,7 +345,7 @@ def _render_block_label_cell(container, block: str, r: Optional[tuple[date, date
     )
 
 
-st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.set_page_config(page_title=APP_TITLE_TEXT, layout="wide")
 
 st.markdown(
     """
@@ -435,7 +436,7 @@ st.markdown(
     f"""
     <div class="hero">
       <div class="hero-row">
-        <h1 class="hero-title">{APP_TITLE}</h1>
+        <h1 class="hero-title">{APP_TITLE_DISPLAY_HTML}</h1>
         <div class="hero-badge">CONFIG</div>
       </div>
     </div>
