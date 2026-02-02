@@ -516,7 +516,6 @@ with tabs[1]:
     st.subheader("Class/Year Assignments")
     num_blocks = _num_blocks(cfg)
     req = cfg["gui"]["class_year_requirements"]
-    prev_req = {track: dict(req.get(track, {})) for track in CLASS_TRACKS}
     rows = []
     for track in CLASS_TRACKS:
         row = {"Track": track}
@@ -525,7 +524,7 @@ with tabs[1]:
         row["Total Blocks"] = sum(row[rot] for rot in ROTATION_COLUMNS)
         rows.append(row)
 
-    rows_df = pd.DataFrame(rows, columns=["Track"] + DISPLAY_COLUMNS)
+    rows_df = pd.DataFrame(rows, columns=["Track"] + list(ROTATION_COLUMNS))
     if "class_year_editor_open" not in st.session_state:
         st.session_state["class_year_editor_open"] = False
 
@@ -536,38 +535,48 @@ with tabs[1]:
         key="class_year_editor_toggle_btn",
         use_container_width=True,
     ):
-        st.session_state["class_year_editor_open"] = not bool(st.session_state.get("class_year_editor_open"))
+        next_open = not bool(st.session_state.get("class_year_editor_open"))
+        st.session_state["class_year_editor_open"] = next_open
+        if next_open:
+            st.session_state.pop("class_year_table", None)
 
     if st.session_state.get("class_year_editor_open"):
         with st.container(border=True):
-            edited_df = st.data_editor(
-                rows_df,
-                hide_index=True,
-                num_rows="fixed",
-                column_config={
-                    "Track": st.column_config.TextColumn(disabled=True),
-                    "MH-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
-                    "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
-                    "48X-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
-                    "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
-                    "KIR": st.column_config.NumberColumn(min_value=0, step=1.0),
-                    "Total Blocks": st.column_config.NumberColumn(disabled=True),
-                },
-                key="class_year_table",
-            )
-            st.caption("Total Blocks is derived; the summary table below updates immediately as you edit.")
-            if st.button("Close editor", key="class_year_editor_close_btn"):
-                st.session_state["class_year_editor_open"] = False
-                st.rerun()
+            with st.form("class_year_editor_form", clear_on_submit=False):
+                edited_df = st.data_editor(
+                    rows_df,
+                    hide_index=True,
+                    num_rows="fixed",
+                    column_config={
+                        "Track": st.column_config.TextColumn(disabled=True),
+                        "MH-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
+                        "MH-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
+                        "48X-IR": st.column_config.NumberColumn(min_value=0, step=0.5),
+                        "48X-CT/US": st.column_config.NumberColumn(min_value=0, step=0.5),
+                        "KIR": st.column_config.NumberColumn(min_value=0, step=1.0),
+                    },
+                    key="class_year_table",
+                )
+                st.caption("Edits are applied when you click Apply.")
+                b_apply, b_close = st.columns(2)
+                apply_clicked = b_apply.form_submit_button("Apply edits", type="primary", use_container_width=True)
+                apply_close_clicked = b_close.form_submit_button("Apply + close", use_container_width=True)
     else:
         edited_df = rows_df
+        apply_clicked = True
+        apply_close_clicked = False
 
-    updated_req = {}
-    for row in edited_df.to_dict("records"):
-        track = row["Track"]
-        updated_req[track] = {rot: float(row.get(rot, 0) or 0) for rot in ROTATION_COLUMNS}
+    updated_req = {track: {rot: float(req.get(track, {}).get(rot, 0) or 0) for rot in ROTATION_COLUMNS} for track in CLASS_TRACKS}
+    if bool(apply_clicked) or bool(apply_close_clicked):
+        updated_req = {}
+        for row in edited_df.to_dict("records"):
+            track = row["Track"]
+            updated_req[track] = {rot: float(row.get(rot, 0) or 0) for rot in ROTATION_COLUMNS}
 
     cfg["gui"]["class_year_requirements"] = updated_req
+    if bool(apply_close_clicked):
+        st.session_state["class_year_editor_open"] = False
+        st.rerun()
 
     non_integer_tracks = []
     for track in CLASS_TRACKS:
