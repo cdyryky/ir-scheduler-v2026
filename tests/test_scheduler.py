@@ -297,6 +297,82 @@ class SchedulerTests(unittest.TestCase):
             off_count = sum(_is_off(rid, f"B{b}") for b in range(3))
             self.assertEqual(off_count, 1, msg=f"Expected {rid} off exactly once in B0..B2")
 
+    def test_consec_full_mh_requires_non_mh_time_in_window(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["one_place"] = "always"
+        modes["block_total_zero_or_full"] = "always"
+        modes["forced"] = "always"
+        modes["consec_full_mh"] = "always"
+
+        requirements = {
+            track: {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0}
+            for track in ["DR1", "DR2", "DR3", "IR1", "IR2", "IR3", "IR4", "IR5"]
+        }
+
+        data = {
+            "blocks": 3,
+            "residents": [{"id": "ir2a", "track": "IR2"}],
+            "forced": [
+                {"resident": "ir2a", "block": 0, "rotation": "MH-IR"},
+                {"resident": "ir2a", "block": 1, "rotation": "MH-IR"},
+                {"resident": "ir2a", "block": 2, "rotation": "MH-IR"},
+            ],
+            "requirements": requirements,
+            "gui": {
+                "constraints": {
+                    "modes": modes,
+                    "params": {"consec_full_mh": {"window_blocks": 3, "min_off_mh_fte": 1.0}},
+                }
+            },
+        }
+
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertFalse(result.solutions)
+        self.assertIsNotNone(result.diagnostic)
+
+        # Make one block non-MH (KIR) so off-MH within the 3-block window is 1.0 FTE.
+        data["forced"][1]["rotation"] = "KIR"
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+
+        # In soft mode, violations should remain feasible but produce a penalty.
+        data["forced"][1]["rotation"] = "MH-IR"
+        data["gui"]["constraints"]["modes"]["consec_full_mh"] = "if_able"
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+        self.assertGreater(result.solutions[0].objective.get("consec_excess", 0), 0)
+
+    def test_consec_full_mh_counts_unassigned_as_off_mh(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["one_place"] = "always"
+        modes["consec_full_mh"] = "always"
+
+        requirements = {
+            track: {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0}
+            for track in ["DR1", "DR2", "DR3", "IR1", "IR2", "IR3", "IR4", "IR5"]
+        }
+
+        # With zero requirements and no forced assignments, the solver may leave the resident unassigned.
+        # Unassigned time should count as "off MH" for the rolling window.
+        data = {
+            "blocks": 4,
+            "residents": [{"id": "ir2a", "track": "IR2"}],
+            "requirements": requirements,
+            "gui": {
+                "constraints": {
+                    "modes": modes,
+                    "params": {"consec_full_mh": {"window_blocks": 4, "min_off_mh_fte": 0.5}},
+                }
+            },
+        }
+
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+
     def test_expand_residents_defaults(self):
         gui = {
             "IR": {

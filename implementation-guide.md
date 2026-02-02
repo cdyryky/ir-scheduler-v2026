@@ -313,36 +313,33 @@ for r in IR4s:
     model.Add(sum(off[(r,b)] for b in range(K)) <= 1)
 ```
 
-### 7.7 Max 2 consecutive full MH-IR blocks (Soft), ignoring 0.5 splits
+### 7.7 Minimum time off MH in rolling windows (Soft)
 
-Interpretation: only **full** MH-IR blocks count.
+Interpretation: “off MH” means **not on MH** (MH-IR or MH-CT/US). This includes both unassigned time and time
+scheduled on non-MH rotations (48X/KIR).
 
-Define `full_mh[r,b]`:
+Let `N` be the window size, and `X` be the minimum “off MH” time (in FTE) required in every `N`-block window.
+For each resident and each window, compute:
 
-```python
-full_mh = {}
-for r in R:
-    for b in B:
-        fm = model.NewBoolVar(f"full_mh_{r}_{b}")
-        model.Add(u[r,b,"MH-IR"] == 2).OnlyEnforceIf(fm)
-        model.Add(u[r,b,"MH-IR"] <= 1).OnlyEnforceIf(fm.Not())
-        full_mh[(r,b)] = fm
+```
+off_units = sum((2 - (u[r,b,"MH-IR"] + u[r,b,"MH-CT/US"])) for b in window)  # half-FTE units
 ```
 
-Create per-window “excess” variables:
+Add a per-window deficit and penalize it:
 
 ```python
-consec_excess = []  # IntVar (0..1) for each 3-block window
+deficit = []  # IntVar (0..2X) for each window
 
+target_units = int(round(X * 2))
 for r in R:
-    for b in range(0, len(B) - 2):  # windows [b, b+1, b+2]
-        win = full_mh[(r,b)] + full_mh[(r,b+1)] + full_mh[(r,b+2)]
-        excess = model.NewIntVar(0, 1, f"mh3_excess_{r}_{b}")
-        model.Add(win <= 2 + excess)   # excess=1 only when win=3
-        consec_excess.append(excess)
+    for b0 in range(0, len(B) - (N - 1)):
+        off_units = sum((2 - (u[r,b0+k,"MH-IR"] + u[r,b0+k,"MH-CT/US"])) for k in range(N))
+        d = model.NewIntVar(0, target_units, f"mh_off_deficit_{r}_{b0}")
+        model.Add(off_units + d >= target_units)
+        deficit.append(d)
 ```
 
-Add `sum(consec_excess)` to the objective with a configured weight.
+Add `sum(deficit)` to the objective with a configured weight.
 
 ---
 

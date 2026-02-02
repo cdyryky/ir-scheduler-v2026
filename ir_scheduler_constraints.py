@@ -428,29 +428,71 @@ def _add_first_timer_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
 
 
 def _add_consec_full_mh_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    max_consecutive = _coerce_int(
-        ctx.constraint_param("consec_full_mh", "max_consecutive", 3), 3, min_value=2, max_value=ctx.num_blocks
-    )
-    full_mh = ctx.full_mh()
+    raw_window = ctx.constraint_param("consec_full_mh", "window_blocks", None)
+    if raw_window is None:
+        raw_window = ctx.constraint_param("consec_full_mh", "max_consecutive", 3)
+    window_blocks = _coerce_int(raw_window, 3, min_value=1, max_value=ctx.num_blocks)
+
+    raw_min_off = ctx.constraint_param("consec_full_mh", "min_off_mh_fte", None)
+    if raw_min_off is None:
+        # Backward-compat: old max_consecutive meant "need at least one block off (full) MH-IR".
+        # Map to "need at least 1.0 FTE off MH" within the same window.
+        raw_min_off = 1.0
+    min_off_units = _coerce_units(raw_min_off, 2, min_units=0, max_units=2 * window_blocks)
+
+    if window_blocks <= 0 or min_off_units <= 0:
+        return
+
+    off_mh_units: Dict[Tuple[str, int], cp_model.IntVar] = {}
     for resident in ctx.schedule_input.residents:
-        for b in range(0, ctx.num_blocks - (max_consecutive - 1)):
-            window = sum(full_mh[(resident.resident_id, b + k)] for k in range(max_consecutive))
-            _enforce(ctx.model.Add(window <= max_consecutive - 1), assumption)
+        for b in range(ctx.num_blocks):
+            mh_units = ctx.u[(resident.resident_id, b, "MH-IR")] + ctx.u[(resident.resident_id, b, "MH-CT/US")]
+            mh_capped = ctx.model.NewIntVar(0, 2, f"mh_units_capped_{resident.resident_id}_{b}")
+            _enforce(ctx.model.AddMinEquality(mh_capped, [mh_units, 2]), assumption)
+
+            off_units = ctx.model.NewIntVar(0, 2, f"off_mh_units_{resident.resident_id}_{b}")
+            _enforce(ctx.model.Add(off_units == 2 - mh_capped), assumption)
+            off_mh_units[(resident.resident_id, b)] = off_units
+
+    for resident in ctx.schedule_input.residents:
+        for b in range(0, ctx.num_blocks - (window_blocks - 1)):
+            window_off = sum(off_mh_units[(resident.resident_id, b + k)] for k in range(window_blocks))
+            _enforce(ctx.model.Add(window_off >= min_off_units), assumption)
 
 
 def _add_consec_full_mh_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
-    max_consecutive = _coerce_int(
-        ctx.constraint_param("consec_full_mh", "max_consecutive", 3), 3, min_value=2, max_value=ctx.num_blocks
-    )
-    full_mh = ctx.full_mh()
-    excess_vars: List[cp_model.IntVar] = []
+    raw_window = ctx.constraint_param("consec_full_mh", "window_blocks", None)
+    if raw_window is None:
+        raw_window = ctx.constraint_param("consec_full_mh", "max_consecutive", 3)
+    window_blocks = _coerce_int(raw_window, 3, min_value=1, max_value=ctx.num_blocks)
+
+    raw_min_off = ctx.constraint_param("consec_full_mh", "min_off_mh_fte", None)
+    if raw_min_off is None:
+        raw_min_off = 1.0
+    min_off_units = _coerce_units(raw_min_off, 2, min_units=0, max_units=2 * window_blocks)
+
+    if window_blocks <= 0 or min_off_units <= 0:
+        return []
+
+    off_mh_units: Dict[Tuple[str, int], cp_model.IntVar] = {}
     for resident in ctx.schedule_input.residents:
-        for b in range(0, ctx.num_blocks - (max_consecutive - 1)):
-            window = sum(full_mh[(resident.resident_id, b + k)] for k in range(max_consecutive))
-            excess = ctx.model.NewIntVar(0, 1, f"mh_consec_excess_{resident.resident_id}_{b}")
-            ctx.model.Add(window <= (max_consecutive - 1) + excess)
-            excess_vars.append(excess)
-    return excess_vars
+        for b in range(ctx.num_blocks):
+            mh_units = ctx.u[(resident.resident_id, b, "MH-IR")] + ctx.u[(resident.resident_id, b, "MH-CT/US")]
+            mh_capped = ctx.model.NewIntVar(0, 2, f"mh_units_capped_{resident.resident_id}_{b}")
+            ctx.model.AddMinEquality(mh_capped, [mh_units, 2])
+
+            off_units = ctx.model.NewIntVar(0, 2, f"off_mh_units_{resident.resident_id}_{b}")
+            ctx.model.Add(off_units == 2 - mh_capped)
+            off_mh_units[(resident.resident_id, b)] = off_units
+
+    deficit_vars: List[cp_model.IntVar] = []
+    for resident in ctx.schedule_input.residents:
+        for b in range(0, ctx.num_blocks - (window_blocks - 1)):
+            window_off = sum(off_mh_units[(resident.resident_id, b + k)] for k in range(window_blocks))
+            deficit = ctx.model.NewIntVar(0, min_off_units, f"mh_off_deficit_{resident.resident_id}_{b}")
+            ctx.model.Add(window_off + deficit >= min_off_units)
+            deficit_vars.append(deficit)
+    return deficit_vars
 
 
 def _add_no_sequential_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
@@ -635,7 +677,7 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
     ),
     ConstraintSpec(
         id="consec_full_mh",
-        label="Avoid consecutive full MH-IR blocks",
+        label="Minimum time off MH in rolling windows",
         softenable=True,
         impact=25,
         add_hard=_add_consec_full_mh_hard,

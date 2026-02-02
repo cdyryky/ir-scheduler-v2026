@@ -92,7 +92,7 @@ def default_config() -> dict:
                         "min_dr_residents": 3,
                         "relaxation": "mh_ctus_cap",
                     },
-                    "consec_full_mh": {"max_consecutive": 3},
+                    "consec_full_mh": {"window_blocks": 4, "min_off_mh_fte": 1.5},
                 },
             },
         },

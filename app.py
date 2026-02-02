@@ -1148,10 +1148,26 @@ with tabs[3]:
                 "Limits first-time MH-IR residents (DR1/IR1) to 1 per block.",
             )
         if spec.id == "consec_full_mh":
-            max_consecutive = spec_params.get("max_consecutive", 3)
+            window_blocks = spec_params.get("window_blocks", spec_params.get("max_consecutive", 4))
+            try:
+                window_blocks = int(window_blocks)
+            except Exception:
+                window_blocks = 4
+            window_blocks = min(max(1, window_blocks), max(1, num_blocks))
+
+            raw_min_off = spec_params.get("min_off_mh_fte")
+            if raw_min_off is None:
+                raw_min_off = 1.5
+            try:
+                min_off = float(raw_min_off)
+            except Exception:
+                min_off = 1.5
+            min_off = min(max(0.0, min_off), float(window_blocks))
+            min_off = round(min_off * 2) / 2.0
+
             return (
-                "Avoid consecutive full MH-IR blocks",
-                f"Prevents (or discourages) runs of {max_consecutive} full MH-IR blocks in a row.",
+                "Minimum time off MH (rolling window)",
+                f"All residents must have at least {min_off:.1f} FTE off MH rotations in every {window_blocks}-block window.",
             )
         if spec.id == "no_sequential_year1_3":
             return (
@@ -1503,18 +1519,64 @@ with tabs[3]:
 
         elif spec.id == "consec_full_mh":
             p = _params_for(spec.id)
-            max_consecutive = p.get("max_consecutive", 3)
-            if not isinstance(max_consecutive, int) or max_consecutive < 2:
-                max_consecutive = 3
-            upper = max(2, min(num_blocks, 8))
-            options = list(range(2, upper + 1))
-            sel = st.selectbox(
-                "Avoid N full MH-IR blocks in a row",
-                options=options,
-                index=options.index(max_consecutive) if max_consecutive in options else options.index(min(3, upper)),
-                key="cparam_consec_full_mh_max_consecutive",
+            raw_window = p.get("window_blocks", p.get("max_consecutive", 4))
+            if not isinstance(raw_window, int) or raw_window < 1:
+                raw_window = 4
+            raw_window = min(max(1, raw_window), max(1, num_blocks))
+
+            window_key = "cparam_consec_full_mh_window_blocks"
+            stored_window = st.session_state.get(window_key, raw_window)
+            if not isinstance(stored_window, int) or stored_window < 1:
+                stored_window = raw_window
+            stored_window = min(max(1, stored_window), max(1, num_blocks))
+            st.session_state[window_key] = stored_window
+
+            window_options = list(range(1, max(1, num_blocks) + 1))
+            window_sel = st.selectbox(
+                "Window size (blocks)",
+                options=window_options,
+                index=window_options.index(stored_window) if stored_window in window_options else window_options.index(raw_window),
+                key=window_key,
             )
-            p["max_consecutive"] = int(sel)
+            window_blocks = int(window_sel)
+
+            raw_min_off = p.get("min_off_mh_fte", None)
+            if raw_min_off is None:
+                raw_min_off = 1.5
+            try:
+                min_off = float(raw_min_off)
+            except Exception:
+                min_off = 1.5
+            min_off = min(max(0.0, min_off), float(window_blocks))
+            min_off = round(min_off * 2) / 2.0
+
+            off_options = [i / 2.0 for i in range(0, (2 * window_blocks) + 1)]
+            if min_off not in off_options:
+                min_off = max(0.0, min(float(window_blocks), min_off))
+                min_off = round(min_off * 2) / 2.0
+            off_key = "cparam_consec_full_mh_min_off_mh_fte"
+            stored_off = st.session_state.get(off_key, min_off)
+            try:
+                stored_off = float(stored_off)
+            except Exception:
+                stored_off = min_off
+            if stored_off not in off_options:
+                stored_off = min_off
+            st.session_state[off_key] = stored_off
+
+            off_sel = st.selectbox(
+                "Min FTE off MH in each window",
+                options=off_options,
+                index=off_options.index(stored_off),
+                key=off_key,
+                help="Counts all time not on MH rotations (unassigned + 48X/KIR), not 'vacation'.",
+                format_func=lambda v: f"{float(v):.1f}",
+            )
+
+            p["window_blocks"] = int(window_blocks)
+            p["min_off_mh_fte"] = float(off_sel)
+            if "max_consecutive" in p:
+                del p["max_consecutive"]
 
     categories = {
         "Core Rules": {"one_place", "block_total_zero_or_full", "no_half_non_ir5", "no_half_kir"},
