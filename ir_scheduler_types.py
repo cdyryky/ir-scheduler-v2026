@@ -22,6 +22,7 @@ class ScheduleInput:
     soft_priority: List[str]
     constraint_params: Dict[str, dict]
     requirements: Dict[str, Dict[str, int]]
+    warnings: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -41,8 +42,8 @@ class Diagnostic:
 class SolveResult:
     solutions: List[Solution]
     diagnostic: Optional[Diagnostic] = None
+    warnings: Tuple[str, ...] = ()
 
 
 class ScheduleError(Exception):
     pass
-

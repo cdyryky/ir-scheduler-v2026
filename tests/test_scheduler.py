@@ -573,8 +573,11 @@ class SchedulerTests(unittest.TestCase):
             yaml.safe_dump(data, handle, sort_keys=False)
             path = handle.name
 
-        with self.assertRaises(ScheduleError):
-            load_schedule_input(path)
+        schedule_input = load_schedule_input(path)
+        self.assertTrue(getattr(schedule_input, "warnings", ()))
+        joined = "\n".join(schedule_input.warnings)
+        self.assertIn("requirements.IR1.KIR", joined)
+        self.assertIn("rounded to", joined)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ This solver schedules **IR-service rotations only**:
 
 Residents may be **unassigned** in many blocks.
 
-**Exception:** IR5 residents are assigned **every block** within this IR-service solver.
+Whether a resident is assigned every block is determined by the per-track `requirements` totals (e.g., if a track’s total required blocks equals `num_blocks`, then assignments must fill every block under the “0 or 1.0 FTE per block” rule).
 
 ---
 
@@ -24,7 +24,7 @@ Residents may be **unassigned** in many blocks.
 
 ### 2.1 Half-unit assignment variables
 
-Use half-unit integers to support IR5 50/50 splitting:
+Use half-unit integers to support 0.5 assignments and within-block splits:
 
 - `u[r,b,rot] ∈ {0,1,2}` where:
   - `0` = 0.0 FTE
@@ -81,30 +81,13 @@ model.Add(u[r,b,rot] == 2).OnlyEnforceIf(forced[r,b,rot])
 
 ---
 
-## 4. IR5 Split Coupling (Hard)
+## 4. Within-block Splitting (Supported)
 
-Only IR5 may split, and only between **MH-IR** and **48X-IR**, exactly 50/50 within a block.
+Residents may satisfy a single block’s 1.0 FTE via a 0.5/0.5 split across two rotations (driven by requirements and other constraints).
 
-Couple the “half” states:
-
-```python
-mh = u[r,b,"MH-IR"]
-x48 = u[r,b,"48X-IR"]
-
-is_half_mh = model.NewBoolVar(f"is_half_mh_{r}_{b}")
-is_half_x48 = model.NewBoolVar(f"is_half_x48_{r}_{b}")
-
-model.Add(mh == 1).OnlyEnforceIf(is_half_mh)
-model.Add(mh != 1).OnlyEnforceIf(is_half_mh.Not())
-
-model.Add(x48 == 1).OnlyEnforceIf(is_half_x48)
-model.Add(x48 != 1).OnlyEnforceIf(is_half_x48.Not())
-
-# (mh==1) <-> (48X-IR==1)
-model.Add(is_half_mh == is_half_x48)
-```
-
-No additional “optional strengthening” is required because `sum(u[r,b,*]) <= 2` already forces other rotations to 0 if `mh==1` and `x48==1`.
+- DR residents are prohibited from half assignments (see `no_half_non_ir5`).
+- Half assignments on `KIR` are prohibited (see `no_half_kir`).
+- There is **no special coupling** that restricts which two non-`KIR` rotations may be split, and there is **no IR5-only split rule**.
 
 ---
 
@@ -432,4 +415,4 @@ Optional later enhancement:
 - §7.1 and §7.2 are explicitly **FTE-based** and **hard**.
 - §7.3 and §7.6 are **soft** and implemented via “excess” penalty variables.
 - `full_mh.Not()` is implemented as `u <= 1` (not `u != 2`).
-- Removed redundant “optional strengthening” under split coupling.
+- Updated the splitting description: within-block 0.5/0.5 splits are supported, but there is no IR5-only coupling rule.

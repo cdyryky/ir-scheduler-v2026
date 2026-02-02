@@ -16,6 +16,8 @@ def result_to_yaml(result: SolveResult) -> str:
             {"objective": solution.objective, "assignments": solution.assignments}
             for solution in result.solutions
         ]
+    if getattr(result, "warnings", None):
+        payload["warnings"] = list(result.warnings)
     if result.diagnostic:
         payload["diagnostic"] = {
             "status": result.diagnostic.status,
@@ -36,4 +38,3 @@ def result_to_csv(result: SolveResult) -> str:
                     if fte:
                         writer.writerow([idx, resident, block, rotation, fte])
     return output.getvalue()
-

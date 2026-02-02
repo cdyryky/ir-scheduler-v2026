@@ -105,6 +105,7 @@ def _with_constraint_modes(schedule_input: ScheduleInput, overrides: Dict[str, s
         soft_priority=schedule_input.soft_priority,
         constraint_params=schedule_input.constraint_params,
         requirements=schedule_input.requirements,
+        warnings=schedule_input.warnings,
     )
 
 
@@ -243,9 +244,10 @@ def solve_schedule(
                     suggest_relaxations=suggest_relaxations,
                     progress_cb=progress_cb,
                 ),
+                warnings=schedule_input.warnings,
             )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return SolveResult([], None)
+            return SolveResult([], None, warnings=schedule_input.warnings)
 
     groups = _resident_groups(schedule_input.residents)
     ir5_ids = groups["IR5"]
@@ -269,12 +271,15 @@ def solve_schedule(
                     suggest_relaxations=suggest_relaxations,
                     progress_cb=progress_cb,
                 ),
+                warnings=schedule_input.warnings,
             )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return SolveResult([], None)
+            return SolveResult([], None, warnings=schedule_input.warnings)
 
     soft_priority = [cid for cid in schedule_input.soft_priority if cid in SPEC_BY_ID]
     if soft_priority:
+        did_optimize = False
+        status = cp_model.OPTIMAL
         for cid in soft_priority:
             spec = SPEC_BY_ID[cid]
             if _constraint_mode(spec, schedule_input.constraint_modes) != "if_able":
@@ -283,6 +288,7 @@ def solve_schedule(
             if not penalty_vars:
                 continue
             status, _ = _optimize_and_fix(model, solver, [(var, 1) for var in penalty_vars])
+            did_optimize = True
             if status == cp_model.INFEASIBLE:
                 return SolveResult(
                     [],
@@ -296,9 +302,12 @@ def solve_schedule(
                         suggest_relaxations=suggest_relaxations,
                         progress_cb=progress_cb,
                     ),
+                    warnings=schedule_input.warnings,
                 )
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                return SolveResult([], None)
+                return SolveResult([], None, warnings=schedule_input.warnings)
+        if not did_optimize:
+            status = cp_model.OPTIMAL
         final_terms = _build_weighted_terms(penalties, schedule_input.weights, ignore_ids=set(soft_priority))
     else:
         final_terms = _build_weighted_terms(penalties, schedule_input.weights)
@@ -337,6 +346,7 @@ def solve_schedule(
                 suggest_relaxations=suggest_relaxations,
                 progress_cb=progress_cb,
             ),
+            warnings=schedule_input.warnings,
         )
 
-    return SolveResult(solutions, None)
+    return SolveResult(solutions, None, warnings=schedule_input.warnings)
