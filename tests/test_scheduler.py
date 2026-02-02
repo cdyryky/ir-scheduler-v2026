@@ -256,6 +256,47 @@ class SchedulerTests(unittest.TestCase):
         result = solve_schedule(schedule_input)
         self.assertTrue(result.solutions)
 
+    def test_ir4_off_sicu_rotates_one_off_per_block(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["one_place"] = "always"
+        modes["block_total_zero_or_full"] = "always"
+        modes["ir4_off_sicu"] = "always"
+
+        requirements = {
+            track: {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0}
+            for track in ["DR1", "DR2", "DR3", "IR1", "IR2", "IR3", "IR4", "IR5"]
+        }
+
+        data = {
+            "blocks": 3,
+            "residents": [
+                {"id": "ir4a", "track": "IR4"},
+                {"id": "ir4b", "track": "IR4"},
+                {"id": "ir4c", "track": "IR4"},
+            ],
+            "requirements": requirements,
+            "gui": {"constraints": {"modes": modes}},
+        }
+
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+
+        sol = result.solutions[0]
+
+        def _is_off(resident_id: str, block_label: str) -> bool:
+            rotations = sol.assignments.get(resident_id, {}).get(block_label, {})
+            return not any(rotations.values())
+
+        for b in range(3):
+            block = f"B{b}"
+            off_ids = [rid for rid in ["ir4a", "ir4b", "ir4c"] if _is_off(rid, block)]
+            self.assertEqual(len(off_ids), 1, msg=f"Expected exactly one IR4 off in {block}: {off_ids}")
+
+        for rid in ["ir4a", "ir4b", "ir4c"]:
+            off_count = sum(_is_off(rid, f"B{b}") for b in range(3))
+            self.assertEqual(off_count, 1, msg=f"Expected {rid} off exactly once in B0..B2")
+
     def test_expand_residents_defaults(self):
         gui = {
             "IR": {

@@ -1082,6 +1082,11 @@ with tabs[3]:
                 "Limit senior residents on MH-IR per block",
                 f"'Senior' means IR{ir_min_year}+; cap is {max_fte}.0 FTE per block.",
             )
+        if spec.id == "ir4_off_sicu":
+            return (
+                "IR4 off for SICU",
+                "During the first N blocks (N = number of IR4 residents), exactly one IR4 is off per block, rotating so each IR4 is off once.",
+            )
         if spec.id == "dr1_early_block":
             first_n = spec_params.get("first_n_blocks", 4)
             return (
@@ -1524,7 +1529,7 @@ with tabs[3]:
             "ir4_plus_mh_cap",
             "track_requirements",
         },
-        "Track Rules": {"dr1_early_block", "ir3_late_block"},
+        "Track Rules": {"dr1_early_block", "ir3_late_block", "ir4_off_sicu"},
         "Special Blocks": {"holiday_block_staffing", "viva_block_staffing"},
         "Preferences": {"first_timer", "consec_full_mh", "no_sequential_year1_3"},
     }

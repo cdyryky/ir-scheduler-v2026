@@ -309,6 +309,33 @@ def _add_ir3_late_block_restrictions(ctx: ConstraintContext, assumption: Optiona
                 _enforce(ctx.model.Add(ctx.u[(resident_id, b, rot)] == 0), assumption)
 
 
+def _add_ir4_off_sicu_rotation(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
+    ir4_ids = list(ctx.groups.get("IR4") or [])
+    if not ir4_ids:
+        return
+
+    # Let N be the number of IR4 residents. In blocks 0..N-1 (or 0..num_blocks-1 if fewer blocks),
+    # exactly one IR4 is OFF each block, and no IR4 is OFF more than once.
+    k = min(len(ir4_ids), ctx.num_blocks)
+    if k <= 0:
+        return
+
+    is_off: Dict[Tuple[str, int], cp_model.BoolVar] = {}
+    for resident_id in ir4_ids:
+        for b in range(k):
+            off = ctx.model.NewBoolVar(f"ir4_sicu_off_{resident_id}_{b}")
+            any_assigned = sum(ctx.p[(resident_id, b, rot)] for rot in ROTATIONS)
+            _enforce(ctx.model.Add(any_assigned == 0), assumption).OnlyEnforceIf(off)
+            _enforce(ctx.model.Add(any_assigned >= 1), assumption).OnlyEnforceIf(off.Not())
+            is_off[(resident_id, b)] = off
+
+    for b in range(k):
+        _enforce(ctx.model.Add(sum(is_off[(resident_id, b)] for resident_id in ir4_ids) == 1), assumption)
+
+    for resident_id in ir4_ids:
+        _enforce(ctx.model.Add(sum(is_off[(resident_id, b)] for b in range(k)) <= 1), assumption)
+
+
 def _mh_any_in_block(
     ctx: ConstraintContext,
     *,
@@ -560,6 +587,13 @@ CONSTRAINT_SPECS: List[ConstraintSpec] = [
         softenable=False,
         impact=60,
         add_hard=_add_ir4_plus_mh_cap,
+    ),
+    ConstraintSpec(
+        id="ir4_off_sicu",
+        label="IR4 off for SICU",
+        softenable=False,
+        impact=15,
+        add_hard=_add_ir4_off_sicu_rotation,
     ),
     ConstraintSpec(
         id="dr1_early_block",

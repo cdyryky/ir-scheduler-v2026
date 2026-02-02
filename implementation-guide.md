@@ -290,7 +290,30 @@ for r in IR3s:
         model.Add(u[r,b,"48X-IR"] == 0)
 ```
 
-### 7.6 Max 2 consecutive full MH-IR blocks (Soft), ignoring 0.5 splits
+### 7.6 IR4 off for SICU (Hard)
+
+Let `N = len(IR4s)`. In each of the first `min(N, num_blocks)` blocks, exactly one IR4 is OFF (no assignment),
+and no IR4 is OFF more than once across those blocks.
+
+```python
+K = min(len(IR4s), len(B))
+off = {}  # BoolVar off[(r,b)] <-> (sum(p[r,b,*]) == 0)
+
+for r in IR4s:
+    for b in range(K):
+        off[(r,b)] = model.NewBoolVar(f"ir4_sicu_off_{r}_{b}")
+        any_assigned = sum(p[r,b,rot] for rot in ROTATIONS)
+        model.Add(any_assigned == 0).OnlyEnforceIf(off[(r,b)])
+        model.Add(any_assigned >= 1).OnlyEnforceIf(off[(r,b)].Not())
+
+for b in range(K):
+    model.Add(sum(off[(r,b)] for r in IR4s) == 1)
+
+for r in IR4s:
+    model.Add(sum(off[(r,b)] for b in range(K)) <= 1)
+```
+
+### 7.7 Max 2 consecutive full MH-IR blocks (Soft), ignoring 0.5 splits
 
 Interpretation: only **full** MH-IR blocks count.
 
