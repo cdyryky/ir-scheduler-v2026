@@ -1636,7 +1636,7 @@ with tabs[4]:
         if modes.get(spec.id, "if_able" if spec.softenable else "always") == "if_able"
     ]
     if not if_able_ids:
-        st.info("No constraints currently set to if_able.")
+        st.info("No constraints currently set to Try (soft).")
     else:
         priority = cfg["gui"]["constraints"].get("soft_priority", [])
         priority = [cid for cid in priority if cid in if_able_ids]
