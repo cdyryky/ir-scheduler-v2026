@@ -82,29 +82,8 @@ def _render_html_dataframe(
 
     fmt = format_cell or _default_format
 
-    parts: list[str] = [
-        f"""
-<style>
-table.{table_class} {{
-  width: 100%;
-  border-collapse: collapse;
-}}
-table.{table_class} th, table.{table_class} td {{
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  padding: 0.35rem 0.5rem;
-  vertical-align: top;
-  font-size: 0.92rem;
-}}
-table.{table_class} th {{
-  background: rgba(127, 127, 127, 0.10);
-  font-weight: 700;
-  text-align: left;
-}}
-</style>
-<table class="{html.escape(table_class)}">
-  <thead><tr>
-"""
-    ]
+    safe_table_class = html.escape(f"sched-table {table_class}".strip())
+    parts: list[str] = [f'<div class="sched-table-wrap"><table class="{safe_table_class}"><thead><tr>']
 
     for col in cols:
         parts.append(f"<th>{html.escape(str(col))}</th>")
@@ -123,7 +102,7 @@ table.{table_class} th {{
             td_style_attr = f' style="{html.escape(td_style)}"' if td_style else ""
             parts.append(f"<td{td_style_attr}>{text}</td>")
         parts.append("</tr>")
-    parts.append("</tbody></table>")
+    parts.append("</tbody></table></div>")
 
     st.markdown("\n".join(parts), unsafe_allow_html=True)
 
@@ -356,7 +335,7 @@ def _render_block_label_cell(container, block: str, r: Optional[tuple[date, date
         f"""
 <div style="line-height: 1.15;">
   <div><strong>{safe_block}</strong></div>
-  <div style="font-size: 0.85em; color: rgba(120, 120, 120, 0.95);">{safe_dates}</div>
+  <div style="font-size: 0.85em; color: var(--sched-muted);">{safe_dates}</div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -365,15 +344,136 @@ def _render_block_label_cell(container, block: str, r: Optional[tuple[date, date
 
 st.set_page_config(page_title=APP_TITLE_TEXT, layout="wide")
 
+_ensure_cfg_state()
+cfg = st.session_state["cfg"]
+
 st.markdown(
     """
     <style>
-    div[data-testid="stDownloadButton"] { display: flex; justify-content: flex-end; }
+    :root {
+        --sched-radius: 16px;
+        --sched-radius-sm: 12px;
+        --sched-border: rgba(0,0,0,0.10);
+        --sched-muted: rgba(0,0,0,0.62);
+        --sched-shadow: 0 18px 40px rgba(0,0,0,0.10);
+        --sched-shadow-sm: 0 10px 24px rgba(0,0,0,0.08);
+    }
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --sched-border: rgba(255,255,255,0.12);
+            --sched-muted: rgba(255,255,255,0.70);
+            --sched-shadow: 0 18px 40px rgba(0,0,0,0.30);
+            --sched-shadow-sm: 0 10px 24px rgba(0,0,0,0.26);
+        }
+    }
+
+    div.block-container {
+        padding-top: 1.05rem;
+        padding-bottom: 2.5rem;
+    }
+
+    /* Tabs: pill-style nav */
+    div[data-baseweb="tab-list"] {
+        gap: 0.25rem;
+        padding: 0.25rem;
+        border-radius: 999px;
+        background: rgba(127,127,127,0.06);
+        border: 1px solid var(--sched-border);
+    }
+    div[data-baseweb="tab-list"] button {
+        border-radius: 999px !important;
+        padding: 0.35rem 0.85rem !important;
+        font-weight: 650 !important;
+        letter-spacing: -0.01em;
+    }
+    div[data-baseweb="tab-list"] button[aria-selected="true"] {
+        background: rgba(59, 130, 246, 0.14) !important;
+        border: 1px solid rgba(59, 130, 246, 0.25) !important;
+    }
+
+    /* Buttons and inputs */
+    div[data-testid="stButton"] button,
     div[data-testid="stDownloadButton"] button,
     div[data-testid="stFileUploader"] button {
-        height: 2.5rem;
+        height: 2.55rem;
+        border-radius: var(--sched-radius-sm);
         padding: 0 1.1rem;
     }
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea,
+    div[data-baseweb="select"] > div {
+        border-radius: var(--sched-radius-sm);
+    }
+
+    /* Bordered containers (st.container(border=True)) */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: var(--sched-radius) !important;
+        border: 1px solid var(--sched-border) !important;
+        background: rgba(127,127,127,0.02);
+        box-shadow: var(--sched-shadow-sm);
+    }
+
+    /* Custom HTML tables */
+    .sched-table-wrap {
+        border-radius: var(--sched-radius);
+        border: 1px solid var(--sched-border);
+        overflow: auto;
+        background: var(--background-color);
+        box-shadow: var(--sched-shadow-sm);
+        margin: 0.35rem 0 0.6rem 0;
+    }
+    table.sched-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+    table.sched-table th, table.sched-table td {
+        padding: 0.45rem 0.65rem;
+        vertical-align: top;
+        font-size: 0.92rem;
+        border-bottom: 1px solid var(--sched-border);
+        border-right: 1px solid var(--sched-border);
+        font-variant-numeric: tabular-nums;
+    }
+    table.sched-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--secondary-background-color);
+        font-weight: 750;
+        text-align: left;
+    }
+    table.sched-table th:last-child, table.sched-table td:last-child {
+        border-right: none;
+    }
+    table.sched-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+    table.sched-table tbody tr:nth-child(odd) {
+        background: rgba(127,127,127,0.03);
+    }
+    table.sched-table tbody tr:hover {
+        background: rgba(59, 130, 246, 0.06);
+    }
+
+    /* Dataframes/editors and expanders */
+    div[data-testid="stDataFrame"],
+    div[data-testid="stDataEditor"] {
+        border-radius: var(--sched-radius);
+        overflow: hidden;
+    }
+    details[data-testid="stExpander"] {
+        border: 1px solid var(--sched-border);
+        border-radius: var(--sched-radius);
+        padding: 0.15rem 0.75rem;
+        background: rgba(127,127,127,0.02);
+        box-shadow: var(--sched-shadow-sm);
+    }
+    details[data-testid="stExpander"] summary {
+        font-weight: 650;
+    }
+
+    div[data-testid="stDownloadButton"] { display: flex; justify-content: flex-end; }
     /* Make the drag/drop area taller so it visually aligns with the Save column. */
     section[data-testid="stFileUploaderDropzone"] {
         min-height: clamp(7.5rem, 12vh, 10.5rem);
@@ -384,20 +484,19 @@ st.markdown(
     /* Modern header */
     .hero {
         position: relative;
-        border-radius: 16px;
+        border-radius: var(--sched-radius);
         padding: 0.55rem 1.0rem;
         margin: 0 0 0.45rem 0;
         background:
           radial-gradient(900px 260px at 10% 0%, rgba(59, 130, 246, 0.16), rgba(0,0,0,0) 60%),
           radial-gradient(900px 260px at 90% 10%, rgba(168, 85, 247, 0.14), rgba(0,0,0,0) 60%),
           var(--secondary-background-color);
-        border: 1px solid rgba(0,0,0,0.08);
-        box-shadow:
-          0 18px 40px rgba(0,0,0,0.10);
+        border: 1px solid var(--sched-border);
+        box-shadow: var(--sched-shadow);
         overflow: hidden;
     }
     @media (prefers-color-scheme: dark) {
-        .hero { border-color: rgba(255,255,255,0.10); }
+        .hero { border-color: var(--sched-border); }
     }
     .hero:before {
         content: "";
@@ -470,21 +569,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+num_blocks = _num_blocks(cfg)
+ir_count = len(_ir_resident_rows(cfg))
+dr_total = 0
+try:
+    dr_counts = cfg.get("gui", {}).get("residents", {}).get("DR_counts", {})
+    if isinstance(dr_counts, dict):
+        dr_total = sum(int(dr_counts.get(track, 0) or 0) for track in DR_TRACKS)
+except Exception:
+    dr_total = 0
+
 st.markdown(
     f"""
     <div class="hero">
       <div class="hero-row">
         <h1 class="hero-title">{APP_TITLE_DISPLAY_HTML}</h1>
-        <div class="hero-badge">CONFIG</div>
+        <div class="hero-badge">GUI</div>
+      </div>
+      <p class="hero-sub">IR/DR scheduler (CP-SAT). Configure, solve, and export schedules.</p>
+      <div class="pill-row">
+        <span class="pill info">Blocks: {int(num_blocks)}</span>
+        <span class="pill good">IR: {int(ir_count)}</span>
+        <span class="pill good">DR: {int(dr_total)}</span>
       </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
-
-_ensure_cfg_state()
-
-cfg = st.session_state["cfg"]
 
 if not st.session_state.get("infer_ok", True):
     st.warning("Could not infer IR1-IR5 names from residents; using defaults.")
@@ -745,8 +856,8 @@ with tabs[1]:
         except (TypeError, ValueError):
             return ""
         if abs(v) < 1e-9:
-            return "background-color: #f4f4f4; color: #8a8a8a;"
-        return "background-color: #e9f7ef; font-weight: 600;"
+            return "background-color: rgba(127,127,127,0.08); color: rgba(127,127,127,0.88);"
+        return "background-color: rgba(34, 197, 94, 0.12); font-weight: 650;"
 
     def _display_cell_format(col: str, value: Any) -> str:
         if col in numeric_cols:
@@ -831,7 +942,7 @@ with tabs[1]:
                 ok = False
             if pd.notna(req_max) and available > req_max:
                 ok = False
-            color = "#e9f7ef" if ok else "#fdecea"
+            color = "rgba(34, 197, 94, 0.10)" if ok else "rgba(239, 68, 68, 0.12)"
             return f"background-color: {color};"
 
         return _style
@@ -2202,29 +2313,8 @@ with tabs[5]:
         if escape_cells:
             for col in safe_df.columns:
                 safe_df[col] = safe_df[col].apply(lambda v: html.escape(str(v)) if v is not None else "")
-        table_html = safe_df.to_html(index=False, escape=False, classes=table_class)
-        st.markdown(
-            f"""
-<style>
-table.{table_class} {{
-  width: 100%;
-  border-collapse: collapse;
-}}
-table.{table_class} th, table.{table_class} td {{
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  padding: 0.35rem 0.5rem;
-  vertical-align: top;
-  font-size: 0.92rem;
-}}
-table.{table_class} th {{
-  background: rgba(127, 127, 127, 0.10);
-  font-weight: 700;
-}}
-</style>
-{table_html}
-""",
-            unsafe_allow_html=True,
-        )
+        table_html = safe_df.to_html(index=False, escape=False, border=0, classes=["sched-table", table_class])
+        st.markdown(f'<div class="sched-table-wrap">{table_html}</div>', unsafe_allow_html=True)
 
     cfg["num_solutions"] = int(
         st.number_input(
