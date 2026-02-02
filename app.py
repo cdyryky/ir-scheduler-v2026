@@ -1990,6 +1990,9 @@ if False:  # Checks tab removed
         except Exception as exc:
             st.error(f"Invalid configuration: {exc}")
         else:
+            if getattr(schedule_input, "warnings", None):
+                st.warning("Input normalized with rounding:")
+                st.markdown("\n".join(f"- {w}" for w in schedule_input.warnings))
             ok = _is_feasible(schedule_input)
             if ok:
                 st.success("Feasibility probe: model is feasible with current settings (Try constraints may be relaxed).")
@@ -2137,6 +2140,9 @@ table.{table_class} th {{
         except Exception as exc:
             st.error(f"Invalid configuration: {exc}")
         else:
+            if getattr(schedule_input, "warnings", None):
+                st.warning("Input normalized with rounding:")
+                st.markdown("\n".join(f"- {w}" for w in schedule_input.warnings))
             with st.spinner("Solving..."):
                 result = solve_schedule(schedule_input)
             st.session_state["solve_result"] = result
@@ -2147,6 +2153,9 @@ table.{table_class} th {{
     if result is None:
         st.info("Click Solve to run the scheduler.")
     else:
+        if getattr(result, "warnings", None):
+            st.warning("Input normalized with rounding:")
+            st.markdown("\n".join(f"- {w}" for w in result.warnings))
         if result.diagnostic:
             st.error("Model infeasible.")
             st.markdown("**Conflicting constraints**")

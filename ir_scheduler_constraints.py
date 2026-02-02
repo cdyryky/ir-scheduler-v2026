@@ -110,20 +110,6 @@ def _add_no_half_kir_assignments(ctx: ConstraintContext, assumption: Optional[cp
             _enforce(ctx.model.Add(ctx.u[(resident.resident_id, b, "KIR")] != 1), assumption)
 
 
-def _add_ir5_split_coupling(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
-    for resident_id in ctx.groups["IR5"]:
-        for b in range(ctx.num_blocks):
-            mh = ctx.u[(resident_id, b, "MH-IR")]
-            x48 = ctx.u[(resident_id, b, "48X-IR")]
-            is_half_mh = ctx.model.NewBoolVar(f"is_half_mh_{resident_id}_{b}")
-            is_half_x48 = ctx.model.NewBoolVar(f"is_half_x48_{resident_id}_{b}")
-            _enforce(ctx.model.Add(mh == 1), assumption).OnlyEnforceIf(is_half_mh)
-            _enforce(ctx.model.Add(mh != 1), assumption).OnlyEnforceIf(is_half_mh.Not())
-            _enforce(ctx.model.Add(x48 == 1), assumption).OnlyEnforceIf(is_half_x48)
-            _enforce(ctx.model.Add(x48 != 1), assumption).OnlyEnforceIf(is_half_x48.Not())
-            _enforce(ctx.model.Add(is_half_mh == is_half_x48), assumption)
-
-
 def _add_block_total_zero_or_full(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
     for resident in ctx.schedule_input.residents:
         for b in range(ctx.num_blocks):

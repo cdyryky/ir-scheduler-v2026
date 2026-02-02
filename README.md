@@ -164,5 +164,5 @@ Only non-zero assignments are included.
 ## Notes
 
 - The full constraint mapping is documented in `implementation-guide.md`.
-- IR5 residents may split 0.5/0.5 between `MH-IR` and `48X-IR` within a block.
+- Half-block (0.5) assignments are supported for IR tracks (except `KIR`), which can produce within-block 0.5/0.5 splits across two rotations. DR residents are always full-block.
 - If the model is infeasible, the solver returns an empty `solutions` list and a `diagnostic` section.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 import yaml
 
@@ -68,6 +68,8 @@ def _parse_residents(data: dict) -> List[Resident]:
     if not isinstance(raw, list):
         raise ScheduleError("Residents must be a list when provided.")
     for entry in raw:
+        if not isinstance(entry, dict):
+            raise ScheduleError("Resident entries must be mappings when provided.")
         resident_id = entry.get("id") or entry.get("resident")
         if not resident_id:
             raise ScheduleError("Resident entries require 'id'.")
@@ -88,39 +90,69 @@ def _parse_residents(data: dict) -> List[Resident]:
 
 
 def _parse_block_index(block_labels: List[str], block) -> int:
+    if isinstance(block, bool):
+        raise ScheduleError(f"Unknown block reference: {block}")
     if isinstance(block, int):
-        return block
+        if 0 <= block < len(block_labels):
+            return block
+        raise ScheduleError(f"Block index out of range: {block}")
     if isinstance(block, str):
         if block in block_labels:
             return block_labels.index(block)
     raise ScheduleError(f"Unknown block reference: {block}")
 
 
-def _parse_blocked(data: dict, block_labels: List[str]) -> Dict[Tuple[str, int, str], bool]:
+def _parse_blocked(
+    data: dict, block_labels: List[str], resident_ids: Set[str]
+) -> Dict[Tuple[str, int, str], bool]:
     blocked: Dict[Tuple[str, int, str], bool] = {}
     raw = data.get("blocked", [])
     if isinstance(raw, list):
         for entry in raw:
+            if not isinstance(entry, dict):
+                raise ScheduleError("Blocked entries must be mappings when provided as a list.")
             resident_id = entry.get("resident")
+            if not resident_id:
+                raise ScheduleError("Blocked entries require 'resident'.")
+            resident_id = str(resident_id)
+            if resident_id not in resident_ids:
+                raise ScheduleError(f"Unknown resident in blocked: {resident_id}")
+            if "block" not in entry:
+                raise ScheduleError("Blocked entries require 'block'.")
             block = _parse_block_index(block_labels, entry.get("block"))
             rotation = entry.get("rotation")
+            if not rotation:
+                raise ScheduleError("Blocked entries require 'rotation'.")
             if rotation not in ROTATIONS:
                 raise ScheduleError(f"Unknown rotation in blocked entry: {rotation}")
-            blocked[(resident_id, block, rotation)] = True
+            blocked[(resident_id, block, str(rotation))] = True
     elif isinstance(raw, dict):
         for resident_id, blocks in raw.items():
+            if not resident_id:
+                raise ScheduleError("Blocked must map resident IDs to blocks.")
+            resident_id = str(resident_id)
+            if resident_id not in resident_ids:
+                raise ScheduleError(f"Unknown resident in blocked: {resident_id}")
+            if not isinstance(blocks, dict):
+                raise ScheduleError("Blocked must map residents to a mapping of blocks.")
             for block_key, rotations in blocks.items():
                 block = _parse_block_index(block_labels, block_key)
+                if not isinstance(rotations, list):
+                    raise ScheduleError("Blocked rotations must be a list.")
                 for rotation in rotations:
+                    if not rotation:
+                        raise ScheduleError("Blocked rotations must be non-empty strings.")
                     if rotation not in ROTATIONS:
                         raise ScheduleError(f"Unknown rotation in blocked entry: {rotation}")
-                    blocked[(resident_id, block, rotation)] = True
+                    blocked[(resident_id, block, str(rotation))] = True
     elif raw:
         raise ScheduleError("Blocked must be a list or dictionary when provided.")
     return blocked
 
 
-def _parse_forced(data: dict, block_labels: List[str]) -> Dict[Tuple[str, int, str], bool]:
+def _parse_forced(
+    data: dict, block_labels: List[str], resident_ids: Set[str]
+) -> Dict[Tuple[str, int, str], bool]:
     forced: Dict[Tuple[str, int, str], bool] = {}
     per_resident_block: Dict[Tuple[str, int], str] = {}
     raw = data.get("forced", {})
@@ -128,11 +160,14 @@ def _parse_forced(data: dict, block_labels: List[str]) -> Dict[Tuple[str, int, s
     def _set(resident_id: str, block: int, rotation: str) -> None:
         if not resident_id:
             raise ScheduleError("Forced entries require 'resident'.")
+        resident_id = str(resident_id)
+        if resident_id not in resident_ids:
+            raise ScheduleError(f"Unknown resident in forced: {resident_id}")
         if not rotation:
             raise ScheduleError("Forced entries require 'rotation'.")
         if rotation not in ROTATIONS:
             raise ScheduleError(f"Unknown rotation in forced entry: {rotation}")
-        key = (str(resident_id), int(block))
+        key = (resident_id, int(block))
         if key in per_resident_block and per_resident_block[key] != rotation:
             raise ScheduleError(
                 f"Forced assignments must have at most one rotation per resident/block; "
@@ -140,13 +175,15 @@ def _parse_forced(data: dict, block_labels: List[str]) -> Dict[Tuple[str, int, s
                 f"{per_resident_block[key]} and {rotation}."
             )
         per_resident_block[key] = rotation
-        forced[(str(resident_id), int(block), str(rotation))] = True
+        forced[(resident_id, int(block), str(rotation))] = True
 
     if isinstance(raw, list):
         for entry in raw:
             if not isinstance(entry, dict):
                 raise ScheduleError("Forced entries must be mappings when provided as a list.")
             resident_id = entry.get("resident")
+            if "block" not in entry:
+                raise ScheduleError("Forced entries require 'block'.")
             block = _parse_block_index(block_labels, entry.get("block"))
             rotation = entry.get("rotation")
             _set(resident_id, block, rotation)
@@ -211,7 +248,7 @@ def _parse_gui_constraints(data: dict) -> tuple[Dict[str, str], List[str], Dict[
     return normalized_modes, [str(item) for item in soft_priority], normalized_params
 
 
-def _parse_requirements(data: dict, num_blocks: int) -> Dict[str, Dict[str, int]]:
+def _parse_requirements(data: dict, num_blocks: int, warnings: List[str]) -> Dict[str, Dict[str, int]]:
     raw = data.get("requirements")
     if not isinstance(raw, dict):
         raise ScheduleError("Input must include 'requirements' as a mapping.")
@@ -237,11 +274,19 @@ def _parse_requirements(data: dict, num_blocks: int) -> Dict[str, Dict[str, int]
                     raise ScheduleError(f"Requirements for {track} {rot} must be a non-negative number.")
                 if fte_value < 0:
                     raise ScheduleError(f"Requirements for {track} {rot} must be a non-negative number.")
-                if rot == "KIR" and not fte_value.is_integer():
-                    raise ScheduleError(
-                        f"Requirements for {track} {rot} must be a non-negative whole number."
+                raw_units = fte_value * 2.0
+                units = int(round(raw_units))
+                if abs(raw_units - units) > 1e-9:
+                    warnings.append(
+                        f"requirements.{track}.{rot}: {fte_value} rounded to {units / 2.0:.1f}"
                     )
-                units = int(round(fte_value * 2))
+                if rot == "KIR" and units % 2 != 0:
+                    snapped = 2 * int(round(units / 2))
+                    if snapped != units:
+                        warnings.append(
+                            f"requirements.{track}.{rot}: {units / 2.0:.1f} rounded to {snapped / 2.0:.1f}"
+                        )
+                    units = snapped
             else:
                 blocks: int | None = None
                 # YAML emitted by the GUI may serialize whole-number DR requirements as floats (e.g., 0.0).
@@ -284,8 +329,9 @@ def load_schedule_input_from_data(data: dict) -> ScheduleInput:
     data, _ = prepare_config(data)
     block_labels = _parse_block_labels(data)
     residents = _parse_residents(data)
-    blocked = _parse_blocked(data, block_labels)
-    forced = _parse_forced(data, block_labels)
+    resident_ids = {r.resident_id for r in residents}
+    blocked = _parse_blocked(data, block_labels, resident_ids)
+    forced = _parse_forced(data, block_labels, resident_ids)
     for key in forced.keys():
         if blocked.get(key, False):
             resident_id, block, rotation = key
@@ -295,7 +341,8 @@ def load_schedule_input_from_data(data: dict) -> ScheduleInput:
     weights = _parse_weights(data)
     num_solutions = int(data.get("num_solutions", 1))
     constraint_modes, soft_priority, constraint_params = _parse_gui_constraints(data)
-    requirements = _parse_requirements(data, len(block_labels))
+    warnings: List[str] = []
+    requirements = _parse_requirements(data, len(block_labels), warnings)
     return ScheduleInput(
         block_labels=block_labels,
         residents=residents,
@@ -307,5 +354,5 @@ def load_schedule_input_from_data(data: dict) -> ScheduleInput:
         soft_priority=soft_priority,
         constraint_params=constraint_params,
         requirements=requirements,
+        warnings=tuple(warnings),
     )
-
