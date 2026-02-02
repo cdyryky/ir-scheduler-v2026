@@ -86,7 +86,12 @@ def default_config() -> dict:
                     "dr1_early_block": {"first_n_blocks": 4},
                     "ir3_late_block": {"after_block": 7, "rotations": ["MH-IR", "48X-IR"]},
                     "holiday_block_staffing": {"block": 6, "min_residents": 4},
-                    "viva_block_staffing": {"block": 4, "min_residents": 4, "min_dr_residents": 3},
+                    "viva_block_staffing": {
+                        "block": 4,
+                        "min_residents": 4,
+                        "min_dr_residents": 3,
+                        "relaxation": "mh_ctus_cap",
+                    },
                     "consec_full_mh": {"max_consecutive": 3},
                 },
             },

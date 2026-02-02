@@ -186,16 +186,38 @@ def _add_mh_total_minmax(ctx: ConstraintContext, assumption: Optional[cp_model.B
         _enforce(ctx.model.Add(mh_total <= 2 * max_fte), assumption)
 
 
+def _viva_block_relaxation(ctx: ConstraintContext) -> tuple[int, str] | None:
+    mode = str(ctx.schedule_input.constraint_modes.get("viva_block_staffing", "always") or "").lower()
+    if mode == "disabled":
+        return None
+    params = ctx.schedule_input.constraint_params.get("viva_block_staffing", {})
+    if not isinstance(params, dict):
+        return None
+    min_dr = _coerce_int(params.get("min_dr_residents", 3), 3, min_value=0)
+    if min_dr < 3:
+        return None
+    block = _coerce_int(params.get("block", 4), 4, min_value=0, max_value=max(0, ctx.num_blocks - 1))
+    choice = str(params.get("relaxation", "") or "").strip().lower()
+    if choice not in {"mh_ctus_cap", "first_timer"}:
+        return None
+    return block, choice
+
+
 def _add_mh_ctus_cap(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
     max_fte = _coerce_int(ctx.constraint_param("mh_ctus_cap", "max_fte", 1), 1, min_value=0)
+    viva = _viva_block_relaxation(ctx)
+    viva_block = viva[0] if viva and viva[1] == "mh_ctus_cap" else None
     for b in range(ctx.num_blocks):
+        cap_fte = max_fte
+        if viva_block is not None and b == viva_block:
+            cap_fte = max(cap_fte, 2)
         _enforce(
             ctx.model.Add(
                 sum(
                     ctx.u[(resident.resident_id, b, "MH-CT/US")]
                     for resident in ctx.schedule_input.residents
                 )
-                <= 2 * max_fte
+                <= 2 * cap_fte
             ),
             assumption,
         )
@@ -356,18 +378,24 @@ def _add_viva_block_staffing(ctx: ConstraintContext, assumption: Optional[cp_mod
 
 def _add_first_timer_hard(ctx: ConstraintContext, assumption: Optional[cp_model.BoolVar]):
     first_timer = ctx.first_timer()
+    viva = _viva_block_relaxation(ctx)
+    viva_block = viva[0] if viva and viva[1] == "first_timer" else None
     for b in range(ctx.num_blocks):
         count_b = sum(first_timer[(resident_id, b)] for resident_id in ctx.groups["FIRST_TIMER_CANDIDATES"])
-        _enforce(ctx.model.Add(count_b <= 1), assumption)
+        limit = 2 if viva_block is not None and b == viva_block else 1
+        _enforce(ctx.model.Add(count_b <= limit), assumption)
 
 
 def _add_first_timer_soft(ctx: ConstraintContext) -> List[cp_model.IntVar]:
     first_timer = ctx.first_timer()
+    viva = _viva_block_relaxation(ctx)
+    viva_block = viva[0] if viva and viva[1] == "first_timer" else None
     excess_vars: List[cp_model.IntVar] = []
     for b in range(ctx.num_blocks):
         count_b = sum(first_timer[(resident_id, b)] for resident_id in ctx.groups["FIRST_TIMER_CANDIDATES"])
         excess = ctx.model.NewIntVar(0, len(ctx.groups["FIRST_TIMER_CANDIDATES"]), f"ft_excess_{b}")
-        ctx.model.Add(count_b <= 1 + excess)
+        limit = 2 if viva_block is not None and b == viva_block else 1
+        ctx.model.Add(count_b <= limit + excess)
         excess_vars.append(excess)
     return excess_vars
 

@@ -138,6 +138,7 @@ gui:
         block: 4
         min_residents: 4
         min_dr_residents: 3
+        relaxation: mh_ctus_cap
       consec_full_mh:
         max_consecutive: 3
       one_place: {}

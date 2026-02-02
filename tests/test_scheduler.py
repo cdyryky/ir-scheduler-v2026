@@ -10,11 +10,119 @@ from ir_scheduler import (
     _optimize_and_fix,
     expand_residents,
     load_schedule_input,
+    load_schedule_input_from_data,
     solve_schedule,
 )
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_viva_relaxation_allows_two_first_timers_on_mh_ir(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["forced"] = "always"
+        modes["first_timer"] = "always"
+        modes["viva_block_staffing"] = "always"
+
+        requirements = {
+            track: {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0}
+            for track in ["DR1", "DR2", "DR3", "IR1", "IR2", "IR3", "IR4", "IR5"]
+        }
+
+        data = {
+            "blocks": 1,
+            "residents": [
+                {"id": "ir1a", "track": "IR1"},
+                {"id": "ir1b", "track": "IR1"},
+                {"id": "dr2a", "track": "DR2"},
+                {"id": "dr2b", "track": "DR2"},
+                {"id": "dr2c", "track": "DR2"},
+            ],
+            "forced": [
+                {"resident": "ir1a", "block": 0, "rotation": "MH-IR"},
+                {"resident": "ir1b", "block": 0, "rotation": "MH-IR"},
+                {"resident": "dr2a", "block": 0, "rotation": "MH-IR"},
+                {"resident": "dr2b", "block": 0, "rotation": "MH-IR"},
+                {"resident": "dr2c", "block": 0, "rotation": "MH-IR"},
+            ],
+            "requirements": requirements,
+            "gui": {
+                "constraints": {
+                    "modes": modes,
+                    "params": {
+                        "viva_block_staffing": {
+                            "block": 0,
+                            "min_residents": 4,
+                            "min_dr_residents": 3,
+                            "relaxation": "first_timer",
+                        }
+                    },
+                }
+            },
+        }
+
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+
+        # Without the VIVA relaxation, first_timer hard-limit (<=1) makes this infeasible.
+        data["gui"]["constraints"]["params"]["viva_block_staffing"]["relaxation"] = "mh_ctus_cap"
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertFalse(result.solutions)
+        self.assertIsNotNone(result.diagnostic)
+
+    def test_viva_relaxation_allows_two_mh_ctus(self):
+        modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
+        modes["forced"] = "always"
+        modes["mh_ctus_cap"] = "always"
+        modes["viva_block_staffing"] = "always"
+
+        requirements = {
+            track: {"KIR": 0, "MH-IR": 0, "MH-CT/US": 0, "48X-IR": 0, "48X-CT/US": 0}
+            for track in ["DR1", "DR2", "DR3", "IR1", "IR2", "IR3", "IR4", "IR5"]
+        }
+
+        data = {
+            "blocks": 1,
+            "residents": [
+                {"id": "dr2a", "track": "DR2"},
+                {"id": "dr2b", "track": "DR2"},
+                {"id": "dr2c", "track": "DR2"},
+                {"id": "ir4a", "track": "IR4"},
+            ],
+            "forced": [
+                {"resident": "dr2a", "block": 0, "rotation": "MH-CT/US"},
+                {"resident": "dr2b", "block": 0, "rotation": "MH-CT/US"},
+                {"resident": "dr2c", "block": 0, "rotation": "MH-IR"},
+                {"resident": "ir4a", "block": 0, "rotation": "MH-IR"},
+            ],
+            "requirements": requirements,
+            "gui": {
+                "constraints": {
+                    "modes": modes,
+                    "params": {
+                        "mh_ctus_cap": {"max_fte": 1},
+                        "viva_block_staffing": {
+                            "block": 0,
+                            "min_residents": 4,
+                            "min_dr_residents": 3,
+                            "relaxation": "mh_ctus_cap",
+                        },
+                    },
+                }
+            },
+        }
+
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertTrue(result.solutions)
+
+        # Without the VIVA relaxation, mh_ctus_cap (<=1.0 FTE) makes this infeasible.
+        data["gui"]["constraints"]["params"]["viva_block_staffing"]["relaxation"] = "first_timer"
+        schedule_input = load_schedule_input_from_data(data)
+        result = solve_schedule(schedule_input)
+        self.assertFalse(result.solutions)
+        self.assertIsNotNone(result.diagnostic)
+
     def test_no_sequential_year1_3_allows_split_within_block(self):
         modes = {spec.id: "disabled" for spec in CONSTRAINT_SPECS}
         modes["one_place"] = "always"

@@ -939,19 +939,60 @@ with tabs[3]:
         params = {}
     cfg["gui"]["constraints"]["params"] = params
 
+    def _block_label_with_dates_idx(block_idx: int, num_blocks: int) -> str:
+        block_labels = _block_labels(cfg)
+        if not block_labels:
+            block_labels = [f"B{i}" for i in range(num_blocks)]
+        if block_idx < 0 or block_idx >= len(block_labels):
+            return "None"
+        block = str(block_labels[block_idx])
+        ranges = _block_date_ranges(cfg, block_labels)
+        r = ranges.get(block)
+        if not r:
+            return block
+        return f"{block} ({_format_mmddyy(r[0])} - {_format_mmddyy(r[1])})"
+
+    def _viva_relaxation_for_ui(num_blocks: int) -> tuple[int, str] | None:
+        mode = str(st.session_state.get("mode_viva_block_staffing", modes.get("viva_block_staffing", "always")) or "").lower()
+        if mode == "disabled":
+            return None
+
+        raw_params = params.get("viva_block_staffing")
+        if not isinstance(raw_params, dict):
+            raw_params = {}
+
+        block = st.session_state.get("cparam_viva_block_staffing_block", raw_params.get("block", 4))
+        try:
+            block_idx = int(block)
+        except Exception:
+            block_idx = 4
+        block_idx = min(max(0, block_idx), max(0, num_blocks - 1))
+
+        raw_min_dr = st.session_state.get(
+            "cparam_viva_block_staffing_min_dr_residents",
+            raw_params.get("min_dr_residents", 3),
+        )
+        try:
+            min_dr = int(raw_min_dr)
+        except Exception:
+            min_dr = 3
+        if min_dr < 3:
+            return None
+
+        raw_choice = st.session_state.get(
+            "cparam_viva_block_staffing_relaxation",
+            raw_params.get("relaxation", "mh_ctus_cap"),
+        )
+        choice = str(raw_choice or "").strip().lower()
+        if choice not in {"mh_ctus_cap", "first_timer"}:
+            return None
+        return block_idx, choice
+
     def _constraint_title_and_description(spec, spec_params: dict, num_blocks: int) -> tuple[str, str]:
         def _block_label_with_dates(block_idx: int) -> str:
-            block_labels = _block_labels(cfg)
-            if not block_labels:
-                return f"B{block_idx}"
-            if block_idx < 0 or block_idx >= len(block_labels):
+            if block_idx < 0:
                 return "None"
-            block = str(block_labels[block_idx])
-            ranges = _block_date_ranges(cfg, block_labels)
-            r = ranges.get(block)
-            if not r:
-                return block
-            return f"{block} ({_format_mmddyy(r[0])} - {_format_mmddyy(r[1])})"
+            return _block_label_with_dates_idx(block_idx, num_blocks)
 
         if spec.id == "one_place":
             return (
@@ -1214,6 +1255,15 @@ with tabs[3]:
             p["max_fte"] = int(max_sel)
 
         elif spec.id == "mh_ctus_cap" or spec.id == "kir_cap":
+            if spec.id == "mh_ctus_cap":
+                viva = _viva_relaxation_for_ui(num_blocks)
+                mode = str(st.session_state.get("mode_mh_ctus_cap", modes.get("mh_ctus_cap", "always")) or "").lower()
+                if viva and viva[1] == "mh_ctus_cap" and mode != "disabled":
+                    block_label = _block_label_with_dates_idx(viva[0], num_blocks)
+                    st.info(
+                        f"Note: MH-CT/US cap is relaxed during block {block_label} due to VIVA block staffing enforcement."
+                    )
+
             p = _params_for(spec.id)
             max_fte = p.get("max_fte", 1 if spec.id == "mh_ctus_cap" else 2)
             if not isinstance(max_fte, int) or max_fte < 0:
@@ -1227,6 +1277,15 @@ with tabs[3]:
                 key=f"cparam_{spec.id}_max_fte",
             )
             p["max_fte"] = int(max_sel)
+
+        elif spec.id == "first_timer":
+            viva = _viva_relaxation_for_ui(num_blocks)
+            mode = str(st.session_state.get("mode_first_timer", modes.get("first_timer", "always")) or "").lower()
+            if viva and viva[1] == "first_timer" and mode != "disabled":
+                block_label = _block_label_with_dates_idx(viva[0], num_blocks)
+                st.info(
+                    f"Note: First-timer MH-IR limit is relaxed during block {block_label} due to VIVA block staffing enforcement."
+                )
 
         elif spec.id == "ir4_plus_mh_cap":
             p = _params_for(spec.id)
@@ -1351,7 +1410,7 @@ with tabs[3]:
             min_dr = p.get("min_dr_residents", 3)
             if not isinstance(min_dr, int) or min_dr < 0:
                 min_dr = 3
-            p["min_dr_residents"] = int(
+            min_dr_val = int(
                 st.number_input(
                     "Min DR residents at MH (MH-IR + MH-CT/US)",
                     min_value=0,
@@ -1361,6 +1420,26 @@ with tabs[3]:
                     key="cparam_viva_block_staffing_min_dr_residents",
                 )
             )
+            p["min_dr_residents"] = min_dr_val
+
+            viva_mode = str(st.session_state.get("mode_viva_block_staffing", "") or "").strip().lower()
+            if viva_mode != "disabled" and min_dr_val >= 3:
+                current = str(p.get("relaxation", "mh_ctus_cap") or "").strip().lower()
+                relax_options = ["mh_ctus_cap", "first_timer"]
+                if current not in relax_options:
+                    current = "mh_ctus_cap"
+
+                selection = st.radio(
+                    "Relax one constraint for this VIVA block",
+                    options=relax_options,
+                    index=relax_options.index(current),
+                    format_func={
+                        "mh_ctus_cap": "Allow up to 2 residents on MH-CT/US for this block (relaxes MH-CT/US cap per block)",
+                        "first_timer": "Allow two IR-1 residents on MH-IR for this block (relaxes First-timer MH-IR limit)",
+                    }.get,
+                    key="cparam_viva_block_staffing_relaxation",
+                )
+                p["relaxation"] = str(selection)
 
         elif spec.id == "ir3_late_block":
             p = _params_for(spec.id)
