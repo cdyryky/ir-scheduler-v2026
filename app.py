@@ -36,6 +36,24 @@ APP_TITLE_DISPLAY_HTML = f"<strong><em>{html.escape(APP_TITLE_TEXT)}</em></stron
 
 DISPLAY_COLUMNS = ROTATION_COLUMNS + ["Total Blocks"]
 
+CONSTRAINT_CATEGORY_IDS: dict[str, set[str]] = {
+    "Core Rules": {"one_place", "block_total_zero_or_full", "no_half_non_ir5", "no_half_kir"},
+    "Requests": {"blocked", "forced"},
+    "Coverage & Caps": {
+        "coverage_48x_ir",
+        "coverage_48x_ctus",
+        "mh_total_minmax",
+        "mh_ctus_cap",
+        "kir_cap",
+        "ir5_mh_min_per_block",
+        "ir4_plus_mh_cap",
+        "track_requirements",
+    },
+    "Track Rules": {"dr1_early_block", "ir3_late_block", "ir4_off_sicu"},
+    "Special Blocks": {"holiday_block_staffing", "viva_block_staffing"},
+    "Preferences": {"first_timer", "consec_full_mh", "no_sequential_year1_3"},
+}
+
 
 def _is_na(value: Any) -> bool:
     if value is None:
@@ -464,6 +482,7 @@ tabs = st.tabs(
         "Solve",
         "Calendar",
         "Save/Load Configuration",
+        "Instructions",
     ]
 )
 
@@ -763,169 +782,167 @@ with tabs[2]:
 
     if not block_labels:
         st.error("No blocks configured.")
-        st.stop()
-    if not ir_rows:
+    elif not ir_rows:
         st.info("Add IR residents first (Residents tab).")
-        st.stop()
+    else:
+        left, main = st.columns([1, 4], gap="large")
 
-    left, main = st.columns([1, 4], gap="large")
+        with left:
+            st.markdown("### Resident")
+            if "requests_selected_resident_idx" not in st.session_state:
+                st.session_state["requests_selected_resident_idx"] = 0
 
-    with left:
-        st.markdown("### Resident")
-        if "requests_selected_resident_idx" not in st.session_state:
-            st.session_state["requests_selected_resident_idx"] = 0
+            # Clamp in case residents change (e.g., after loading a new config).
+            selected_idx = int(st.session_state.get("requests_selected_resident_idx", 0) or 0)
+            selected_idx = max(0, min(selected_idx, len(ir_rows) - 1))
+            st.session_state["requests_selected_resident_idx"] = selected_idx
 
-        # Clamp in case residents change (e.g., after loading a new config).
-        selected_idx = int(st.session_state.get("requests_selected_resident_idx", 0) or 0)
-        selected_idx = max(0, min(selected_idx, len(ir_rows) - 1))
-        st.session_state["requests_selected_resident_idx"] = selected_idx
+            for i, row in enumerate(ir_rows):
+                label = f"{row['Track']} — {row['Resident']}"
+                clicked = st.button(
+                    label,
+                    key=f"requests_pick_{i}",
+                    type="primary" if i == selected_idx else "secondary",
+                    use_container_width=True,
+                )
+                if clicked and i != selected_idx:
+                    st.session_state["requests_selected_resident_idx"] = i
+                    st.rerun()
 
-        for i, row in enumerate(ir_rows):
-            label = f"{row['Track']} — {row['Resident']}"
-            clicked = st.button(
-                label,
-                key=f"requests_pick_{i}",
-                type="primary" if i == selected_idx else "secondary",
-                use_container_width=True,
-            )
-            if clicked and i != selected_idx:
-                st.session_state["requests_selected_resident_idx"] = i
-                st.rerun()
+            selected = ir_rows[selected_idx]
+            selected_resident = selected["Resident"]
+            st.caption(f"{selected['Track']}")
 
-        selected = ir_rows[selected_idx]
-        selected_resident = selected["Resident"]
-        st.caption(f"{selected['Track']}")
+            resident_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
+            resident_on = {(blk, rot) for (res, blk, rot) in forced_set if res == selected_resident}
+            st.caption(f"Off checks: {len(resident_off)}")
+            st.caption(f"On checks: {len(resident_on)}")
 
-        resident_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
-        resident_on = {(blk, rot) for (res, blk, rot) in forced_set if res == selected_resident}
-        st.caption(f"Off checks: {len(resident_off)}")
-        st.caption(f"On checks: {len(resident_on)}")
+        with main:
+            sub_off, sub_on = st.tabs(["Off", "On"])
 
-    with main:
-        sub_off, sub_on = st.tabs(["Off", "On"])
+            with sub_off:
+                st.caption(
+                    "Checked = resident cannot be assigned to that rotation in that block. "
+                    "You may check multiple rotations per block."
+                )
+                current_on_by_block: dict[str, str] = {}
+                for res, blk, rot in forced_set:
+                    if res == selected_resident and blk not in current_on_by_block:
+                        current_on_by_block[blk] = rot
 
-        with sub_off:
-            st.caption(
-                "Checked = resident cannot be assigned to that rotation in that block. "
-                "You may check multiple rotations per block."
-            )
-            current_on_by_block: dict[str, str] = {}
-            for res, blk, rot in forced_set:
-                if res == selected_resident and blk not in current_on_by_block:
-                    current_on_by_block[blk] = rot
+                current_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
 
-            current_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
+                header = st.columns([1.2, 0.9, 0.9] + [1.0] * len(ROTATION_COLUMNS) + [1.1])
+                header[0].markdown("**Block**")
+                header[1].markdown("**Select**")
+                header[2].markdown("**Clear**")
+                for idx, rot in enumerate(ROTATION_COLUMNS):
+                    header[3 + idx].markdown(f"**{rot}**")
+                header[-1].markdown("**On**")
 
-            header = st.columns([1.2, 0.9, 0.9] + [1.0] * len(ROTATION_COLUMNS) + [1.1])
-            header[0].markdown("**Block**")
-            header[1].markdown("**Select**")
-            header[2].markdown("**Clear**")
-            for idx, rot in enumerate(ROTATION_COLUMNS):
-                header[3 + idx].markdown(f"**{rot}**")
-            header[-1].markdown("**On**")
+                for block in block_labels:
+                    k_res = _keyify(selected_resident)
+                    k_blk = _keyify(block)
+                    forced_rot = current_on_by_block.get(block, "")
 
-            for block in block_labels:
-                k_res = _keyify(selected_resident)
-                k_blk = _keyify(block)
-                forced_rot = current_on_by_block.get(block, "")
+                    cols = st.columns([1.2, 0.9, 0.9] + [1.0] * len(ROTATION_COLUMNS) + [1.1])
+                    _render_block_label_cell(cols[0], str(block), block_ranges.get(str(block)))
 
-                cols = st.columns([1.2, 0.9, 0.9] + [1.0] * len(ROTATION_COLUMNS) + [1.1])
-                _render_block_label_cell(cols[0], str(block), block_ranges.get(str(block)))
+                    if cols[1].button("All", key=f"requests_off_all_{k_res}_{k_blk}", use_container_width=True):
+                        for rot in ROTATION_COLUMNS:
+                            if forced_rot and rot == forced_rot:
+                                st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = False
+                            else:
+                                st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = True
+                        st.rerun()
 
-                if cols[1].button("All", key=f"requests_off_all_{k_res}_{k_blk}", use_container_width=True):
+                    if cols[2].button("None", key=f"requests_off_none_{k_res}_{k_blk}", use_container_width=True):
+                        for rot in ROTATION_COLUMNS:
+                            st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = False
+                        st.rerun()
+
+                    for idx, rot in enumerate(ROTATION_COLUMNS):
+                        k_rot = _keyify(rot)
+                        key = f"requests_off_{k_res}_{k_blk}_{k_rot}"
+                        checked = cols[3 + idx].checkbox(
+                            "off",
+                            value=(block, rot) in current_off,
+                            key=key,
+                            label_visibility="collapsed",
+                            disabled=bool(forced_rot and rot == forced_rot),
+                        )
+                        if forced_rot and rot == forced_rot and checked:
+                            st.session_state[key] = False
+
+                    cols[-1].write(forced_rot or "—")
+
+                next_blocked = {t for t in blocked_set if t[0] != selected_resident}
+                for block in block_labels:
+                    k_res = _keyify(selected_resident)
+                    k_blk = _keyify(block)
+                    forced_rot = current_on_by_block.get(block, "")
                     for rot in ROTATION_COLUMNS:
                         if forced_rot and rot == forced_rot:
-                            st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = False
-                        else:
-                            st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = True
-                    st.rerun()
+                            continue
+                        key = f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"
+                        if bool(st.session_state.get(key, (block, rot) in current_off)):
+                            next_blocked.add((selected_resident, block, rot))
 
-                if cols[2].button("None", key=f"requests_off_none_{k_res}_{k_blk}", use_container_width=True):
-                    for rot in ROTATION_COLUMNS:
-                        st.session_state[f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"] = False
-                    st.rerun()
+                # If something is forced ON, it cannot also be blocked OFF for that exact rotation.
+                next_blocked = {t for t in next_blocked if t not in forced_set}
+                cfg["blocked"] = _blocked_dict(next_blocked)
 
-                for idx, rot in enumerate(ROTATION_COLUMNS):
-                    k_rot = _keyify(rot)
-                    key = f"requests_off_{k_res}_{k_blk}_{k_rot}"
-                    checked = cols[3 + idx].checkbox(
-                        "off",
-                        value=(block, rot) in current_off,
+            with sub_on:
+                st.caption("Select a single rotation per block (or blank for no On request).")
+                current_on_by_block: dict[str, str] = {}
+                for res, blk, rot in forced_set:
+                    if res == selected_resident and blk not in current_on_by_block:
+                        current_on_by_block[blk] = rot
+
+                blocked_now = _blocked_set(cfg, block_labels)
+                blocked_by_block: dict[str, set[str]] = {}
+                for res, blk, rot in blocked_now:
+                    if res != selected_resident:
+                        continue
+                    blocked_by_block.setdefault(blk, set()).add(rot)
+
+                for block in block_labels:
+                    k_res = _keyify(selected_resident)
+                    k_blk = _keyify(block)
+                    key = f"requests_on_{k_res}_{k_blk}"
+
+                    blocked_rots = blocked_by_block.get(block, set())
+                    options = [""] + [rot for rot in ROTATION_COLUMNS if rot not in blocked_rots]
+                    current = current_on_by_block.get(block, "")
+                    if current not in options:
+                        current = ""
+
+                    cols = st.columns([1.2, 4.0])
+                    _render_block_label_cell(cols[0], str(block), block_ranges.get(str(block)))
+                    cols[1].selectbox(
+                        "Rotation",
+                        options=options,
+                        index=options.index(current),
                         key=key,
                         label_visibility="collapsed",
-                        disabled=bool(forced_rot and rot == forced_rot),
+                        help="Set blank to clear the On request for this block.",
                     )
-                    if forced_rot and rot == forced_rot and checked:
-                        st.session_state[key] = False
 
-                cols[-1].write(forced_rot or "—")
+                next_forced = {t for t in forced_set if t[0] != selected_resident}
+                for block in block_labels:
+                    k_res = _keyify(selected_resident)
+                    k_blk = _keyify(block)
+                    rot = str(st.session_state.get(f"requests_on_{k_res}_{k_blk}", "") or "").strip()
+                    if rot:
+                        next_forced.add((selected_resident, block, rot))
 
-            next_blocked = {t for t in blocked_set if t[0] != selected_resident}
-            for block in block_labels:
-                k_res = _keyify(selected_resident)
-                k_blk = _keyify(block)
-                forced_rot = current_on_by_block.get(block, "")
-                for rot in ROTATION_COLUMNS:
-                    if forced_rot and rot == forced_rot:
-                        continue
-                    key = f"requests_off_{k_res}_{k_blk}_{_keyify(rot)}"
-                    if bool(st.session_state.get(key, (block, rot) in current_off)):
-                        next_blocked.add((selected_resident, block, rot))
+                cfg["forced"] = _forced_dict(next_forced)
 
-            # If something is forced ON, it cannot also be blocked OFF for that exact rotation.
-            next_blocked = {t for t in next_blocked if t not in forced_set}
-            cfg["blocked"] = _blocked_dict(next_blocked)
-
-        with sub_on:
-            st.caption("Select a single rotation per block (or blank for no On request).")
-            current_on_by_block: dict[str, str] = {}
-            for res, blk, rot in forced_set:
-                if res == selected_resident and blk not in current_on_by_block:
-                    current_on_by_block[blk] = rot
-
-            blocked_now = _blocked_set(cfg, block_labels)
-            blocked_by_block: dict[str, set[str]] = {}
-            for res, blk, rot in blocked_now:
-                if res != selected_resident:
-                    continue
-                blocked_by_block.setdefault(blk, set()).add(rot)
-
-            for block in block_labels:
-                k_res = _keyify(selected_resident)
-                k_blk = _keyify(block)
-                key = f"requests_on_{k_res}_{k_blk}"
-
-                blocked_rots = blocked_by_block.get(block, set())
-                options = [""] + [rot for rot in ROTATION_COLUMNS if rot not in blocked_rots]
-                current = current_on_by_block.get(block, "")
-                if current not in options:
-                    current = ""
-
-                cols = st.columns([1.2, 4.0])
-                _render_block_label_cell(cols[0], str(block), block_ranges.get(str(block)))
-                cols[1].selectbox(
-                    "Rotation",
-                    options=options,
-                    index=options.index(current),
-                    key=key,
-                    label_visibility="collapsed",
-                    help="Set blank to clear the On request for this block.",
-                )
-
-            next_forced = {t for t in forced_set if t[0] != selected_resident}
-            for block in block_labels:
-                k_res = _keyify(selected_resident)
-                k_blk = _keyify(block)
-                rot = str(st.session_state.get(f"requests_on_{k_res}_{k_blk}", "") or "").strip()
-                if rot:
-                    next_forced.add((selected_resident, block, rot))
-
-            cfg["forced"] = _forced_dict(next_forced)
-
-            # Remove any exact blocked conflicts now that forced is updated.
-            blocked_now = _blocked_set(cfg, block_labels)
-            blocked_now = {t for t in blocked_now if t not in next_forced}
-            cfg["blocked"] = _blocked_dict(blocked_now)
+                # Remove any exact blocked conflicts now that forced is updated.
+                blocked_now = _blocked_set(cfg, block_labels)
+                blocked_now = {t for t in blocked_now if t not in next_forced}
+                cfg["blocked"] = _blocked_dict(blocked_now)
 
 
 with tabs[3]:
@@ -1579,23 +1596,7 @@ with tabs[3]:
             if "max_consecutive" in p:
                 del p["max_consecutive"]
 
-    categories = {
-        "Core Rules": {"one_place", "block_total_zero_or_full", "no_half_non_ir5", "no_half_kir"},
-        "Requests": {"blocked", "forced"},
-        "Coverage & Caps": {
-            "coverage_48x_ir",
-            "coverage_48x_ctus",
-            "mh_total_minmax",
-            "mh_ctus_cap",
-            "kir_cap",
-            "ir5_mh_min_per_block",
-            "ir4_plus_mh_cap",
-            "track_requirements",
-        },
-        "Track Rules": {"dr1_early_block", "ir3_late_block", "ir4_off_sicu"},
-        "Special Blocks": {"holiday_block_staffing", "viva_block_staffing"},
-        "Preferences": {"first_timer", "consec_full_mh", "no_sequential_year1_3"},
-    }
+    categories = CONSTRAINT_CATEGORY_IDS
 
     tab_names = list(categories.keys())
     sub_tabs = st.tabs(tab_names)
@@ -2518,3 +2519,180 @@ with tabs[7]:
             st.markdown("---")
             st.caption("Pending YAML (not applied yet)")
             st.code(yaml.safe_dump(st.session_state["pending_cfg"], sort_keys=False), language="yaml")
+
+with tabs[8]:
+    st.subheader("Instructions")
+    st.caption("A quick guide for using the scheduler GUI (no YAML editing required).")
+    st.markdown("Use the sections below as a GUI-focused README. Expand only what you need.")
+
+    with st.expander("Quick start (recommended order)", expanded=True):
+        st.markdown(
+            """
+            1. **Residents**: enter IR names and DR counts.
+            2. **Class/Year Assignments**: set per-class rotation totals (make totals whole numbers).
+            3. **Calendar**: pick the start date for `B0` so blocks show dates throughout the app.
+            4. **Requests**: add resident-specific Off/On requests.
+            5. **Constraints**: choose which rules are hard (**Always**), soft (**Try**), or disabled.
+            6. **Prioritization**: order Try constraints to tell the solver what to prefer.
+            7. **Solve**: run the solver and download a CSV.
+            8. **Save/Load Configuration**: download a YAML snapshot to preserve your residents + constraints (otherwise they reset on page reload).
+            """
+        )
+
+    with st.expander("Key concepts (blocks, rotations, FTE)", expanded=False):
+        st.markdown(
+            """
+            - **Blocks**: scheduling periods labeled `B0`, `B1`, ... (each block is 4 weeks / 28 days).
+            - **Rotations**: the columns you can assign within a block (e.g., `MH-IR`, `48X-CT/US`, `KIR`).
+            - **FTE values**: most rotations allow `0`, `0.5`, or `1.0` per block (some are full-block only).
+            - **Requests vs. Constraints**:
+              - **Requests** are resident-specific (“this resident must/must not do X in block Y”).
+              - **Constraints** are global rules (coverage, caps, sequencing rules, preferences, etc.).
+            - **Session state**: the app keeps your configuration while the page is open; download YAML to save it permanently.
+            """
+        )
+
+    with st.expander("Residents tab", expanded=False):
+        st.markdown(
+            """
+            - Enter **two IR names per track** (IR1–IR5). These become the residents you can schedule.
+            - Set **DR counts** per DR track. DRs are included in coverage/caps and class/year totals.
+            """
+        )
+
+    with st.expander("Class/Year Assignments tab", expanded=False):
+        st.markdown(
+            """
+            - Use **Edit class/year requirements** to set how many blocks each class/track should do for each rotation.
+            - **Totals must be whole numbers** before solving (the app warns if they are not).
+            - The summary tables help you sanity-check:
+              - **Per-class totals** (what each resident is expected to complete)
+              - **Availability vs. required coverage/caps** (whether totals can satisfy your coverage rules)
+            - If you see an error (**red**), fix it before solving (many other tabs depend on valid residents and totals).
+            """
+        )
+
+    with st.expander("Class/Year Assignments: common pitfalls", expanded=False):
+        st.markdown(
+            """
+            - Non-integer totals (e.g., `11.5` blocks) will block feasibility.
+            - `KIR` totals must be whole numbers (no `0.5` KIR).
+            - If availability is below minimums (or above caps), the solver may be infeasible unless those constraints are set to Try/Off.
+            """
+        )
+
+    with st.expander("Requests tab (Off / On)", expanded=False):
+        st.markdown(
+            """
+            - Pick a resident on the left.
+            - **Off**: check one or more rotations in a block to forbid them for that resident/block.
+              - Use **All** / **None** to quickly set a full row.
+              - If a rotation is forced **On** for a block, the matching **Off** checkbox is disabled.
+            - **On**: select *one* rotation per block to force that assignment (or blank to clear).
+            - Requests are **hard** rules; too many On/Off selections can make the model infeasible.
+            """
+        )
+
+    with st.expander("Constraints tab (Always / Try / Off)", expanded=False):
+        st.markdown(
+            """
+            Constraints are grouped into subtabs (Core Rules, Requests, Coverage & Caps, etc.).
+
+            - **Always**: hard requirement; must be satisfied.
+            - **Try**: soft requirement; the solver may relax it to regain feasibility and/or improve other priorities.
+            - **Off**: not enforced.
+
+            Some constraints have parameters (caps, block ranges, specific rotations) that appear directly under the constraint.
+
+            A short explanation of each constraint is available at the bottom of this Instructions tab.
+            """
+        )
+
+    with st.expander("Prioritization tab (Try constraint ordering)", expanded=False):
+        st.markdown(
+            """
+            - This tab only lists constraints currently set to **Try**.
+            - Move items **Up/Down** to tell the solver which Try constraints matter most when tradeoffs are necessary.
+            - Lower objective score is better; the Solve tab shows a breakdown per solution.
+            """
+        )
+
+    with st.expander("Solve tab (run + interpret results)", expanded=False):
+        st.markdown(
+            """
+            - Set **Number of solutions** to explore multiple feasible options.
+            - Click **Solve** to run the scheduler using the current in-app configuration.
+            - If infeasible, the app shows **conflicting constraints** and **fast suggestions**.
+            - If feasible, pick a solution and download:
+              - **CSV (Table)**: rotation × block table with assigned residents
+              - **CSV (Long)**: long-format schedule (`schedule-output.csv`)
+            """
+        )
+
+    with st.expander("Solve: troubleshooting infeasibility", expanded=False):
+        st.markdown(
+            """
+            Common causes:
+            - Too many **On** requests, or On requests conflicting with Off selections.
+            - Coverage minimums that exceed available residents/FTE.
+            - Caps that are too tight (e.g., `MH-CT/US` cap + required MH total).
+
+            Quick fixes:
+            - Set the hardest constraints to **Try**, then re-solve; the Solve tab will list which Try-mode constraints were relaxed to reach feasibility.
+            - Reduce strict caps/minimums, then re-tighten once you have a baseline feasible schedule.
+            """
+        )
+
+    with st.expander("Calendar tab", expanded=False):
+        st.markdown(
+            """
+            - Pick the start date for block `B0`.
+            - The app treats each block as 28 days and shows a start/end table.
+            - This is used to display “block + date range” labels throughout the UI.
+            """
+        )
+
+    with st.expander("Save/Load Configuration tab", expanded=False):
+        st.markdown(
+            """
+            - **Load**: drag & drop a YAML file to preview it, then click **Apply** to replace the current session configuration.
+            - **Save**: download the current in-app configuration as YAML (a snapshot you can reload later).
+            - **Current YAML** shows the exact configuration the solver will use.
+            """
+        )
+
+    st.markdown("### Constraints reference")
+    st.caption("Expand a constraint to see its mode (Always/Try/Off) and a short description.")
+
+    gui_constraints = cfg.get("gui", {}).get("constraints", {})
+    modes = gui_constraints.get("modes", {}) if isinstance(gui_constraints, dict) else {}
+    params = gui_constraints.get("params", {}) if isinstance(gui_constraints, dict) else {}
+    if not isinstance(modes, dict):
+        modes = {}
+    if not isinstance(params, dict):
+        params = {}
+
+    num_blocks = _num_blocks(cfg)
+    tab_names = list(CONSTRAINT_CATEGORY_IDS.keys())
+    ref_tabs = st.tabs(tab_names)
+
+    def _mode_text(spec) -> str:
+        raw = modes.get(spec.id, "if_able" if getattr(spec, "softenable", False) else "always")
+        m = str(raw or "").lower()
+        return {"always": "Always (hard)", "if_able": "Try (soft)", "disabled": "Off (disabled)"}.get(m, str(raw))
+
+    for tab_name, tab in zip(tab_names, ref_tabs):
+        with tab:
+            ids = CONSTRAINT_CATEGORY_IDS.get(tab_name, set())
+            for spec in CONSTRAINT_SPECS:
+                if spec.id not in ids:
+                    continue
+                spec_params = params.get(spec.id, {})
+                if not isinstance(spec_params, dict):
+                    spec_params = {}
+                title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                with st.expander(title, expanded=False):
+                    st.markdown(f"**Id**: `{spec.id}`")
+                    st.markdown(f"**Mode**: {_mode_text(spec)}")
+                    if description:
+                        st.markdown(description)
