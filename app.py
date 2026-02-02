@@ -2523,7 +2523,6 @@ with tabs[7]:
 with tabs[8]:
     st.subheader("Instructions")
     st.caption("A quick guide for using the scheduler GUI (no YAML editing required).")
-    st.markdown("Use the sections below as a GUI-focused README. Expand only what you need.")
 
     with st.expander("Quick start (recommended order)", expanded=True):
         st.markdown(
@@ -2696,3 +2695,18 @@ with tabs[8]:
                     st.markdown(f"**Mode**: {_mode_text(spec)}")
                     if description:
                         st.markdown(description)
+                    if spec.id == "viva_block_staffing":
+                        st.markdown(
+                            """
+                            **VIVA “relaxations” (when `min_dr_residents` ≥ 3)**
+
+                            The VIVA block staffing rule can optionally loosen *one other rule for the VIVA block only* to help
+                            the solver place enough DRs on MH that block:
+
+                            - `mh_ctus_cap`: raises the MH-CT/US cap to **2.0 FTE** *in the VIVA block* (instead of the usual cap).
+                            - `first_timer`: allows **2 first-timers** *in the VIVA block* (instead of 1).
+
+                            This is a targeted exception (not a Try-mode relaxation): the schedule still satisfies the affected
+                            constraint, but with a looser per-block limit for the VIVA block.
+                            """
+                        )
