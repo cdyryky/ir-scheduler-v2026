@@ -1428,7 +1428,7 @@ with tabs[3]:
                     current = "mh_ctus_cap"
 
                 selection = st.radio(
-                    "Relax one constraint for this VIVA block",
+                    "In order to have 3+ DR residents at MH, you must relax a constraint for this VIVA block:",
                     options=relax_options,
                     index=relax_options.index(current),
                     format_func={
