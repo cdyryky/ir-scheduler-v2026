@@ -535,6 +535,7 @@ with tabs[1]:
                 },
                 key="class_year_table",
             )
+            st.caption("Total Blocks is derived; the summary table below updates immediately as you edit.")
             if st.button("Close editor", key="class_year_editor_close_btn"):
                 st.session_state["class_year_editor_open"] = False
                 st.rerun()
@@ -547,9 +548,6 @@ with tabs[1]:
         updated_req[track] = {rot: float(row.get(rot, 0) or 0) for rot in ROTATION_COLUMNS}
 
     cfg["gui"]["class_year_requirements"] = updated_req
-    if updated_req != prev_req:
-        # Trigger a second rerun so computed cells (e.g., Total Blocks) update immediately.
-        st.rerun()
 
     non_integer_tracks = []
     for track in CLASS_TRACKS:
