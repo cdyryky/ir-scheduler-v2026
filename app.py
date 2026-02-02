@@ -445,6 +445,26 @@ st.markdown(
         opacity: 0.78;
         font-size: 14px;
     }
+
+    /* Small UI primitives */
+    .pill-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.25rem 0 0.5rem 0; }
+    .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 999px;
+        padding: 0.28rem 0.55rem;
+        font-size: 12px;
+        line-height: 1;
+        border: 1px solid rgba(127,127,127,0.25);
+        background: rgba(127,127,127,0.08);
+        color: var(--text-color);
+        opacity: 0.92;
+        white-space: nowrap;
+    }
+    .pill.good { border-color: rgba(34, 197, 94, 0.35); background: rgba(34, 197, 94, 0.10); }
+    .pill.warn { border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.10); }
+    .pill.info { border-color: rgba(59, 130, 246, 0.35); background: rgba(59, 130, 246, 0.10); }
     </style>
     """,
     unsafe_allow_html=True,
@@ -516,6 +536,16 @@ with tabs[1]:
     st.subheader("Class/Year Assignments")
     num_blocks = _num_blocks(cfg)
     req = cfg["gui"]["class_year_requirements"]
+    st.markdown(
+        """
+<div class="pill-row">
+  <span class="pill info">IR (non-KIR): 0.5 steps</span>
+  <span class="pill good">KIR: whole blocks</span>
+  <span class="pill good">DR (all rotations): whole blocks</span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
     rows = []
     ir_rows = []
     dr_rows = []
@@ -558,40 +588,48 @@ with tabs[1]:
     if st.session_state.get("class_year_editor_open"):
         with st.container(border=True):
             with st.form("class_year_editor_form", clear_on_submit=False):
-                st.markdown("**IR tracks**")
-                edited_ir_df = st.data_editor(
-                    ir_df,
-                    hide_index=True,
-                    num_rows="fixed",
-                    column_config={
-                        "Track": st.column_config.TextColumn(disabled=True),
-                        "MH-IR": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
-                        "MH-CT/US": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
-                        "48X-IR": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
-                        "48X-CT/US": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
-                        # KIR must be whole blocks for all tracks.
-                        "KIR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
-                    },
-                    key="class_year_table_ir",
-                )
+                t_ir, t_dr = st.tabs(["IR tracks", "DR tracks"])
+                with t_ir:
+                    st.caption("Non-KIR rotations accept 0.5 increments. KIR is whole blocks.")
+                    edited_ir_df = st.data_editor(
+                        ir_df,
+                        hide_index=True,
+                        num_rows="fixed",
+                        use_container_width=True,
+                        column_config={
+                            "Track": st.column_config.TextColumn(disabled=True),
+                            "MH-IR": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
+                            "MH-CT/US": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
+                            "48X-IR": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
+                            "48X-CT/US": st.column_config.NumberColumn(min_value=0.0, max_value=float(num_blocks), step=0.5),
+                            "KIR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
+                        },
+                        key="class_year_table_ir",
+                    )
+                with t_dr:
+                    st.caption("All DR requirements are whole blocks.")
+                    edited_dr_df = st.data_editor(
+                        dr_df,
+                        hide_index=True,
+                        num_rows="fixed",
+                        use_container_width=True,
+                        column_config={
+                            "Track": st.column_config.TextColumn(disabled=True),
+                            "MH-IR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
+                            "MH-CT/US": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
+                            "48X-IR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
+                            "48X-CT/US": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
+                            "KIR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
+                        },
+                        key="class_year_table_dr",
+                    )
 
-                st.markdown("**DR tracks**")
-                edited_dr_df = st.data_editor(
-                    dr_df,
-                    hide_index=True,
-                    num_rows="fixed",
-                    column_config={
-                        "Track": st.column_config.TextColumn(disabled=True),
-                        "MH-IR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
-                        "MH-CT/US": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
-                        "48X-IR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
-                        "48X-CT/US": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
-                        "KIR": st.column_config.NumberColumn(min_value=0, max_value=int(num_blocks), step=1),
-                    },
-                    key="class_year_table_dr",
+                edited_df = (
+                    pd.concat([edited_ir_df, edited_dr_df], ignore_index=True)
+                    if not edited_dr_df.empty
+                    else edited_ir_df
                 )
-                edited_df = pd.concat([edited_ir_df, edited_dr_df], ignore_index=True) if not edited_dr_df.empty else edited_ir_df
-                st.caption("Edits are applied when you click Apply.")
+                st.caption("Edits are applied when you click Apply. Values outside the allowed increments will be rounded on apply.")
                 b_apply, b_close = st.columns(2)
                 apply_clicked = b_apply.form_submit_button("Apply edits", type="primary", use_container_width=True)
                 apply_close_clicked = b_close.form_submit_button("Apply + close", use_container_width=True)
@@ -645,8 +683,8 @@ with tabs[1]:
 
     ui_round_warnings = list(st.session_state.get("class_year_req_rounding_warnings", ()))
     if ui_round_warnings:
-        st.warning("Class/year requirements were normalized with rounding.")
-        st.markdown("\n".join(f"- {w}" for w in ui_round_warnings))
+        with st.expander("Class/year requirements were normalized with rounding", expanded=False):
+            st.markdown("\n".join(f"- {w}" for w in ui_round_warnings))
 
     non_integer_tracks = []
     for track in CLASS_TRACKS:
