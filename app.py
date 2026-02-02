@@ -83,27 +83,7 @@ def _render_html_dataframe(
     fmt = format_cell or _default_format
 
     parts: list[str] = [
-        f"""
-<style>
-table.{table_class} {{
-  width: 100%;
-  border-collapse: collapse;
-}}
-table.{table_class} th, table.{table_class} td {{
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  padding: 0.35rem 0.5rem;
-  vertical-align: top;
-  font-size: 0.92rem;
-}}
-table.{table_class} th {{
-  background: rgba(127, 127, 127, 0.10);
-  font-weight: 700;
-  text-align: left;
-}}
-</style>
-<table class="{html.escape(table_class)}">
-  <thead><tr>
-"""
+        f'<div class="ui-table-wrap {html.escape(table_class)}-wrap"><table class="ui-table {html.escape(table_class)}"><thead><tr>'
     ]
 
     for col in cols:
@@ -123,7 +103,7 @@ table.{table_class} th {{
             td_style_attr = f' style="{html.escape(td_style)}"' if td_style else ""
             parts.append(f"<td{td_style_attr}>{text}</td>")
         parts.append("</tr>")
-    parts.append("</tbody></table>")
+    parts.append("</tbody></table></div>")
 
     st.markdown("\n".join(parts), unsafe_allow_html=True)
 
@@ -363,132 +343,263 @@ def _render_block_label_cell(container, block: str, r: Optional[tuple[date, date
     )
 
 
-st.set_page_config(page_title=APP_TITLE_TEXT, layout="wide")
+def _inject_global_css() -> None:
+    st.markdown(
+        """
+<style>
+:root {
+  --ui-radius-1: 12px;
+  --ui-radius-2: 16px;
+  --ui-border: 1px solid rgba(127,127,127,0.22);
+  --ui-shadow: 0 18px 40px rgba(0,0,0,0.10);
+  --ui-gap: 0.75rem;
+  --ui-gap-lg: 1.1rem;
+  --ui-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+.main .block-container { padding-top: 1.15rem; padding-bottom: 2.1rem; max-width: 1600px; }
+div[data-testid="stButton"] > button,
+div[data-testid="stDownloadButton"] button,
+div[data-testid="stFileUploader"] button {
+    height: 2.5rem;
+    padding: 0 1.05rem;
+    border-radius: 10px;
+}
+div[data-testid="stDownloadButton"] { display: flex; justify-content: flex-end; }
+section[data-testid="stFileUploaderDropzone"] {
+    min-height: clamp(7.5rem, 12vh, 10.5rem);
+    display: flex;
+    align-items: center;
+    border-radius: var(--ui-radius-1);
+}
+button[data-baseweb="tab"] {
+    border-radius: 10px 10px 0 0;
+    font-weight: 600;
+}
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border: var(--ui-border) !important;
+    border-radius: var(--ui-radius-1) !important;
+    box-shadow: 0 8px 26px rgba(0,0,0,0.05);
+    background: rgba(127,127,127,0.04);
+}
+.hero {
+    position: relative;
+    border-radius: var(--ui-radius-2);
+    padding: 0.9rem 1.1rem;
+    margin: 0 0 0.5rem 0;
+    background:
+      radial-gradient(900px 260px at 10% 0%, rgba(59, 130, 246, 0.16), rgba(0,0,0,0) 60%),
+      radial-gradient(900px 260px at 90% 10%, rgba(168, 85, 247, 0.14), rgba(0,0,0,0) 60%),
+      var(--secondary-background-color);
+    border: var(--ui-border);
+    box-shadow: var(--ui-shadow);
+    overflow: hidden;
+}
+.hero:before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0));
+    opacity: 0.35;
+    pointer-events: none;
+}
+.hero-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ui-gap);
+    flex-wrap: wrap;
+}
+.hero-title {
+    margin: 0;
+    font-family: var(--ui-font-sans);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    font-size: clamp(20px, 1.9vw, 30px);
+    line-height: 1.1;
+    color: var(--text-color);
+}
+.hero-sub {
+    margin: 0.45rem 0 0 0;
+    color: var(--text-color);
+    opacity: 0.82;
+    font-size: 0.93rem;
+}
+.hero-badge {
+    font-family: var(--ui-font-sans);
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 700;
+    color: var(--text-color);
+    padding: 0.45rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.10);
+    border: 1px solid rgba(59, 130, 246, 0.22);
+}
+.hero-pills {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+}
+.hero-note {
+    margin: 0.45rem 0 0 0;
+    font-size: 0.82rem;
+    opacity: 0.78;
+}
+.pill-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.25rem 0 0.55rem 0; }
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.28rem 0.55rem;
+    font-size: 12px;
+    line-height: 1;
+    border: 1px solid rgba(127,127,127,0.26);
+    background: rgba(127,127,127,0.08);
+    color: var(--text-color);
+    white-space: nowrap;
+}
+.pill.good { border-color: rgba(34, 197, 94, 0.40); background: rgba(34, 197, 94, 0.12); }
+.pill.warn { border-color: rgba(245, 158, 11, 0.40); background: rgba(245, 158, 11, 0.12); }
+.pill.info { border-color: rgba(59, 130, 246, 0.40); background: rgba(59, 130, 246, 0.12); }
+.pill.bad { border-color: rgba(239, 68, 68, 0.40); background: rgba(239, 68, 68, 0.12); }
+.section-title { margin-bottom: 0.12rem; font-family: var(--ui-font-sans); }
+.ui-card-note { font-size: 0.84rem; opacity: 0.82; margin-top: 0.25rem; }
+.ui-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: var(--ui-border);
+  border-radius: var(--ui-radius-1);
+  background: rgba(127,127,127,0.03);
+}
+table.ui-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.ui-table th,
+table.ui-table td {
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  padding: 0.36rem 0.54rem;
+  vertical-align: top;
+  font-size: 0.91rem;
+  line-height: 1.32;
+}
+table.ui-table th {
+  background: rgba(127, 127, 127, 0.13);
+  font-weight: 700;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+table.ui-table tbody tr:nth-child(even) { background: rgba(127, 127, 127, 0.04); }
+table.ui-table tbody tr:hover { background: rgba(59, 130, 246, 0.08); }
+table.ui-table td:nth-child(n+2), table.ui-table th:nth-child(n+2) { white-space: pre-wrap; }
+@media (prefers-color-scheme: dark) {
+    .hero,
+    [data-testid="stVerticalBlockBorderWrapper"],
+    .ui-table-wrap {
+        border-color: rgba(255,255,255,0.14) !important;
+    }
+    .hero { box-shadow: 0 16px 34px rgba(0,0,0,0.35); }
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        background: rgba(255,255,255,0.015);
+    }
+    .pill.info { background: rgba(59,130,246,0.16); }
+    .pill.good { background: rgba(34,197,94,0.16); }
+    .pill.warn { background: rgba(245,158,11,0.16); }
+    .pill.bad { background: rgba(239,68,68,0.16); }
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
 
-st.markdown(
-    """
-    <style>
-    div[data-testid="stDownloadButton"] { display: flex; justify-content: flex-end; }
-    div[data-testid="stDownloadButton"] button,
-    div[data-testid="stFileUploader"] button {
-        height: 2.5rem;
-        padding: 0 1.1rem;
-    }
-    /* Make the drag/drop area taller so it visually aligns with the Save column. */
-    section[data-testid="stFileUploaderDropzone"] {
-        min-height: clamp(7.5rem, 12vh, 10.5rem);
-        display: flex;
-        align-items: center;
-    }
 
-    /* Modern header */
-    .hero {
-        position: relative;
-        border-radius: 16px;
-        padding: 0.55rem 1.0rem;
-        margin: 0 0 0.45rem 0;
-        background:
-          radial-gradient(900px 260px at 10% 0%, rgba(59, 130, 246, 0.16), rgba(0,0,0,0) 60%),
-          radial-gradient(900px 260px at 90% 10%, rgba(168, 85, 247, 0.14), rgba(0,0,0,0) 60%),
-          var(--secondary-background-color);
-        border: 1px solid rgba(0,0,0,0.08);
-        box-shadow:
-          0 18px 40px rgba(0,0,0,0.10);
-        overflow: hidden;
-    }
-    @media (prefers-color-scheme: dark) {
-        .hero { border-color: rgba(255,255,255,0.10); }
-    }
-    .hero:before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0));
-        opacity: 0.35;
-        pointer-events: none;
-    }
-    .hero-row {
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-        flex-wrap: wrap;
-    }
-    .hero-title {
-        position: relative;
-        margin: 0;
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-        font-weight: 800;
-        letter-spacing: -0.02em;
-        font-size: clamp(18px, 1.75vw, 28px);
-        line-height: 1.1;
-        color: var(--text-color);
-    }
-    .hero-badge {
-        position: relative;
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-        font-size: 12px;
-        line-height: 1;
-        font-weight: 600;
-        color: var(--text-color);
-        padding: 0.45rem 0.65rem;
-        border-radius: 999px;
-        background: rgba(59, 130, 246, 0.10);
-        border: 1px solid rgba(59, 130, 246, 0.18);
-        white-space: nowrap;
-    }
-    .hero-sub {
-        position: relative;
-        margin: 0.55rem 0 0 0;
-        color: var(--text-color);
-        opacity: 0.78;
-        font-size: 14px;
-    }
+def _resident_counts(cfg: dict) -> tuple[int, int]:
+    gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else {}
+    residents = gui.get("residents") if isinstance(gui.get("residents"), dict) else {}
+    ir = residents.get("IR") if isinstance(residents.get("IR"), dict) else {}
+    dr_counts = residents.get("DR_counts") if isinstance(residents.get("DR_counts"), dict) else {}
+    ir_count = 0
+    for track in IR_TRACKS:
+        names = ir.get(track, [])
+        if not isinstance(names, list):
+            continue
+        ir_count += len([name for name in names if isinstance(name, str) and name.strip()])
+    dr_count = 0
+    for track in DR_TRACKS:
+        try:
+            dr_count += int(dr_counts.get(track, 0) or 0)
+        except Exception:
+            continue
+    return ir_count, dr_count
 
-    /* Small UI primitives */
-    .pill-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.25rem 0 0.5rem 0; }
-    .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        border-radius: 999px;
-        padding: 0.28rem 0.55rem;
-        font-size: 12px;
-        line-height: 1;
-        border: 1px solid rgba(127,127,127,0.25);
-        background: rgba(127,127,127,0.08);
-        color: var(--text-color);
-        opacity: 0.92;
-        white-space: nowrap;
-    }
-    .pill.good { border-color: rgba(34, 197, 94, 0.35); background: rgba(34, 197, 94, 0.10); }
-    .pill.warn { border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.10); }
-    .pill.info { border-color: rgba(59, 130, 246, 0.35); background: rgba(59, 130, 246, 0.10); }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
-st.markdown(
-    f"""
-    <div class="hero">
-      <div class="hero-row">
-        <h1 class="hero-title">{APP_TITLE_DISPLAY_HTML}</h1>
-        <div class="hero-badge">CONFIG</div>
-      </div>
+def _pill_html(text: str, tone: str = "info") -> str:
+    return f'<span class="pill {html.escape(tone)}">{html.escape(text)}</span>'
+
+
+def _render_header(cfg: dict) -> None:
+    ir_count, dr_count = _resident_counts(cfg)
+    blocks = _num_blocks(cfg)
+
+    health_messages: list[str] = []
+    if blocks <= 0:
+        health_messages.append("set blocks")
+    if ir_count <= 0:
+        health_messages.append("add IR residents")
+    if not st.session_state.get("infer_ok", True):
+        health_messages.append("verify inferred IR names")
+    try:
+        expand_residents(cfg["gui"]["residents"])
+    except Exception:
+        health_messages.append("fix resident setup")
+
+    config_ok = not health_messages
+    config_label = "Config: OK" if config_ok else "Config: Needs attention"
+    config_tone = "good" if config_ok else "bad"
+
+    pills = [
+        _pill_html(f"Blocks: {blocks}", "info"),
+        _pill_html(f"Residents: IR {ir_count}, DR {dr_count}", "info"),
+        _pill_html(config_label, config_tone),
+    ]
+    result = st.session_state.get("solve_result")
+    if result is not None:
+        solve_ok = not bool(getattr(result, "diagnostic", None))
+        pills.append(_pill_html("Last solve: Feasible" if solve_ok else "Last solve: Infeasible", "good" if solve_ok else "bad"))
+
+    note = ", ".join(health_messages[:2]) if health_messages else "Ready for request setup and solving."
+    st.markdown(
+        f"""
+<div class="hero">
+  <div class="hero-row">
+    <div>
+      <h1 class="hero-title">{APP_TITLE_DISPLAY_HTML}</h1>
+      <p class="hero-sub">Build config → set requests/rules → solve → export</p>
+      <p class="hero-note">{html.escape(note)}</p>
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+    <div>
+      <div style="display:flex; justify-content:flex-end; margin-bottom: 0.4rem;"><span class="hero-badge">CONFIG</span></div>
+      <div class="hero-pills">{"".join(pills)}</div>
+    </div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
+
+st.set_page_config(page_title=APP_TITLE_TEXT, layout="wide")
+_inject_global_css()
 _ensure_cfg_state()
 
 cfg = st.session_state["cfg"]
-
-if not st.session_state.get("infer_ok", True):
-    st.warning("Could not infer IR1-IR5 names from residents; using defaults.")
-
+_render_header(cfg)
 st.markdown('<hr style="margin: 0.35rem 0 0.45rem 0; opacity: 0.35;">', unsafe_allow_html=True)
 
 resident_error = None
@@ -508,44 +619,59 @@ tabs = st.tabs(
 
 with tabs[0]:
     st.subheader("Residents")
-    ir_inputs: dict = {}
-    for track in IR_TRACKS:
-        cols = st.columns(2)
-        default_names = cfg["gui"]["residents"]["IR"].get(track, list(DEFAULT_IR_NAMES[track]))
-        name1 = cols[0].text_input(f"{track} name 1", value=default_names[0], key=f"ir_{track}_1")
-        name2 = cols[1].text_input(f"{track} name 2", value=default_names[1], key=f"ir_{track}_2")
-        ir_inputs[track] = [name1.strip(), name2.strip()]
+    status_container = st.container(border=True)
 
-    st.subheader("DR counts")
-    dr_counts: dict = {}
-    cols = st.columns(3)
-    for idx, track in enumerate(DR_TRACKS):
-        default_count = int(cfg["gui"]["residents"]["DR_counts"].get(track, DEFAULT_DR_COUNTS[track]))
-        dr_counts[track] = int(
-            cols[idx].number_input(
-                f"{track} count", min_value=0, max_value=50, value=default_count, step=1, key=f"dr_{track}"
+    with st.container(border=True):
+        st.markdown("#### IR Residents")
+        st.caption("Two names per IR track. These become schedulable IR residents.")
+        ir_inputs: dict = {}
+        for track in IR_TRACKS:
+            cols = st.columns(2)
+            default_names = cfg["gui"]["residents"]["IR"].get(track, list(DEFAULT_IR_NAMES[track]))
+            name1 = cols[0].text_input(f"{track} name 1", value=default_names[0], key=f"ir_{track}_1")
+            name2 = cols[1].text_input(f"{track} name 2", value=default_names[1], key=f"ir_{track}_2")
+            ir_inputs[track] = [name1.strip(), name2.strip()]
+
+    with st.container(border=True):
+        st.markdown("#### DR Counts")
+        st.caption("Set resident counts per DR track. Counts feed coverage and class-year totals.")
+        dr_counts: dict = {}
+        cols = st.columns(3)
+        for idx, track in enumerate(DR_TRACKS):
+            default_count = int(cfg["gui"]["residents"]["DR_counts"].get(track, DEFAULT_DR_COUNTS[track]))
+            dr_counts[track] = int(
+                cols[idx].number_input(
+                    f"{track} count", min_value=0, max_value=50, value=default_count, step=1, key=f"dr_{track}"
+                )
             )
-        )
 
     cfg["gui"]["residents"] = {"IR": ir_inputs, "DR_counts": dr_counts}
     resident_error = _sync_residents(cfg)
-    if resident_error:
-        st.error(resident_error)
+    with status_container:
+        st.markdown("#### Status")
+        if not st.session_state.get("infer_ok", True):
+            st.warning("Could not infer IR1-IR5 names from residents; using defaults.")
+        if resident_error:
+            st.error(resident_error)
+        if st.session_state.get("infer_ok", True) and not resident_error:
+            st.success("Resident setup looks good.")
 
 with tabs[1]:
     st.subheader("Class/Year Assignments")
     num_blocks = _num_blocks(cfg)
     req = cfg["gui"]["class_year_requirements"]
-    st.markdown(
-        """
+    with st.container(border=True):
+        st.caption("Use this tab to set per-track rotation totals and sanity-check feasibility before solving.")
+        st.markdown(
+            """
 <div class="pill-row">
   <span class="pill info">IR (non-KIR): 0.5 steps</span>
   <span class="pill good">KIR: whole blocks</span>
   <span class="pill good">DR (all rotations): whole blocks</span>
 </div>
 """,
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )
     rows = []
     ir_rows = []
     dr_rows = []
@@ -745,8 +871,8 @@ with tabs[1]:
         except (TypeError, ValueError):
             return ""
         if abs(v) < 1e-9:
-            return "background-color: #f4f4f4; color: #8a8a8a;"
-        return "background-color: #e9f7ef; font-weight: 600;"
+            return "background-color: rgba(127,127,127,0.10); color: rgba(127,127,127,0.95);"
+        return "background-color: rgba(34, 197, 94, 0.12); font-weight: 600;"
 
     def _display_cell_format(col: str, value: Any) -> str:
         if col in numeric_cols:
@@ -758,14 +884,37 @@ with tabs[1]:
                 return ""
         return "" if _is_na(value) else str(value)
 
-    _render_html_dataframe(
-        display_df,
-        table_class="class-year-summary",
-        cell_style=_display_cell_style,
-        format_cell=_display_cell_format,
-    )
+    summary_rows = []
+    for track in CLASS_TRACKS:
+        total_blocks = sum(requirements[track][rot] for rot in ROTATION_COLUMNS)
+        track_ok = math.isclose(total_blocks, round(total_blocks)) and total_blocks <= float(num_blocks) + 1e-9
+        summary_rows.append(
+            {
+                "Track": track,
+                "Total Blocks": total_blocks,
+                "Max Blocks": num_blocks,
+                "Status": "OK" if track_ok else "Check totals",
+            }
+        )
 
-    st.markdown("**Rotation FTE availability vs. coverage**")
+    with st.container(border=True):
+        st.markdown("#### Summary")
+        _render_html_dataframe(
+            pd.DataFrame(summary_rows, columns=["Track", "Total Blocks", "Max Blocks", "Status"]),
+            table_class="class-year-track-status",
+            format_cell=lambda col, value: f"{float(value):.1f}" if col in {"Total Blocks", "Max Blocks"} and not _is_na(value) else ("" if _is_na(value) else str(value)),
+            cell_style=lambda _row, col, value: "background-color: rgba(239, 68, 68, 0.12); font-weight: 600;" if col == "Status" and str(value) != "OK" else ("background-color: rgba(34, 197, 94, 0.12);" if col == "Status" else ""),
+        )
+
+    with st.container(border=True):
+        st.markdown("#### Detailed class/year totals")
+        _render_html_dataframe(
+            display_df,
+            table_class="class-year-summary",
+            cell_style=_display_cell_style,
+            format_cell=_display_cell_format,
+        )
+
     rotation_rows = [
         {
             "Rotation": "48X-IR",
@@ -831,7 +980,7 @@ with tabs[1]:
                 ok = False
             if pd.notna(req_max) and available > req_max:
                 ok = False
-            color = "#e9f7ef" if ok else "#fdecea"
+            color = "rgba(34, 197, 94, 0.12)" if ok else "rgba(239, 68, 68, 0.12)"
             return f"background-color: {color};"
 
         return _style
@@ -846,14 +995,15 @@ with tabs[1]:
                 return ""
         return "" if _is_na(value) else str(value)
 
-    _render_html_dataframe(
-        rotation_display,
-        table_class="rotation-availability",
-        row_style=_req_row_style(rotation_df),
-        format_cell=_rotation_cell_format,
-    )
+    with st.container(border=True):
+        st.markdown("#### Rotation FTE availability vs. coverage")
+        _render_html_dataframe(
+            rotation_display,
+            table_class="rotation-availability",
+            row_style=_req_row_style(rotation_df),
+            format_cell=_rotation_cell_format,
+        )
 
-    st.markdown("**Location totals (per year)**")
     mh_total = avail["MH-IR"] + avail["MH-CT/US"]
     location_rows = [
         {
@@ -877,12 +1027,14 @@ with tabs[1]:
     )
     location_display = location_df[["Location", "Available", "Required"]]
 
-    _render_html_dataframe(
-        location_display,
-        table_class="location-availability",
-        row_style=_req_row_style(location_df),
-        format_cell=_rotation_cell_format,
-    )
+    with st.container(border=True):
+        st.markdown("#### Location totals (per year)")
+        _render_html_dataframe(
+            location_display,
+            table_class="location-availability",
+            row_style=_req_row_style(location_df),
+            format_cell=_rotation_cell_format,
+        )
 
 with tabs[2]:
     st.subheader("Requests")
@@ -905,35 +1057,68 @@ with tabs[2]:
         left, main = st.columns([1, 4], gap="large")
 
         with left:
-            st.markdown("### Resident")
-            if "requests_selected_resident_idx" not in st.session_state:
-                st.session_state["requests_selected_resident_idx"] = 0
+            with st.container(border=True):
+                st.markdown("### Resident")
+                resident_filter = st.text_input(
+                    "Filter residents",
+                    value=str(st.session_state.get("requests_resident_filter", "") or ""),
+                    key="requests_resident_filter",
+                    placeholder="Type track or name...",
+                ).strip()
+                if "requests_selected_resident_idx" not in st.session_state:
+                    st.session_state["requests_selected_resident_idx"] = 0
 
-            # Clamp in case residents change (e.g., after loading a new config).
-            selected_idx = int(st.session_state.get("requests_selected_resident_idx", 0) or 0)
-            selected_idx = max(0, min(selected_idx, len(ir_rows) - 1))
-            st.session_state["requests_selected_resident_idx"] = selected_idx
+                selected_idx = int(st.session_state.get("requests_selected_resident_idx", 0) or 0)
+                selected_idx = max(0, min(selected_idx, len(ir_rows) - 1))
 
-            for i, row in enumerate(ir_rows):
-                label = f"{row['Track']} — {row['Resident']}"
-                clicked = st.button(
-                    label,
-                    key=f"requests_pick_{i}",
-                    type="primary" if i == selected_idx else "secondary",
-                    use_container_width=True,
+                visible_indices: list[int] = []
+                for i, row in enumerate(ir_rows):
+                    label_text = f"{row['Track']} — {row['Resident']}"
+                    if resident_filter and resident_filter.lower() not in label_text.lower():
+                        continue
+                    visible_indices.append(i)
+
+                if not visible_indices:
+                    st.info("No residents match the filter.")
+                    selected_idx = int(st.session_state.get("requests_selected_resident_idx", 0) or 0)
+                elif selected_idx not in visible_indices:
+                    selected_idx = visible_indices[0]
+                    st.session_state["requests_selected_resident_idx"] = selected_idx
+
+                for i in visible_indices:
+                    row = ir_rows[i]
+                    label = f"{row['Track']} — {row['Resident']}"
+                    clicked = st.button(
+                        label,
+                        key=f"requests_pick_{i}",
+                        type="primary" if i == selected_idx else "secondary",
+                        use_container_width=True,
+                    )
+                    if clicked and i != selected_idx:
+                        st.session_state["requests_selected_resident_idx"] = i
+                        st.rerun()
+
+                selected = ir_rows[selected_idx]
+                st.session_state["requests_selected_resident_idx"] = selected_idx
+                selected_resident = selected["Resident"]
+                resident_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
+                resident_on = {(blk, rot) for (res, blk, rot) in forced_set if res == selected_resident}
+                st.markdown(
+                    """
+<div class="pill-row">
+  <span class="pill info">Selected: """
+                    + html.escape(f"{selected['Track']} — {selected_resident}")
+                    + """</span>
+  <span class="pill warn">Off checks: """
+                    + html.escape(str(len(resident_off)))
+                    + """</span>
+  <span class="pill good">On checks: """
+                    + html.escape(str(len(resident_on)))
+                    + """</span>
+</div>
+""",
+                    unsafe_allow_html=True,
                 )
-                if clicked and i != selected_idx:
-                    st.session_state["requests_selected_resident_idx"] = i
-                    st.rerun()
-
-            selected = ir_rows[selected_idx]
-            selected_resident = selected["Resident"]
-            st.caption(f"{selected['Track']}")
-
-            resident_off = {(blk, rot) for (res, blk, rot) in blocked_set if res == selected_resident}
-            resident_on = {(blk, rot) for (res, blk, rot) in forced_set if res == selected_resident}
-            st.caption(f"Off checks: {len(resident_off)}")
-            st.caption(f"On checks: {len(resident_on)}")
 
         with main:
             sub_off, sub_on = st.tabs(["Off", "On"])
@@ -942,6 +1127,15 @@ with tabs[2]:
                 st.caption(
                     "Checked = resident cannot be assigned to that rotation in that block. "
                     "You may check multiple rotations per block."
+                )
+                st.markdown(
+                    """
+<div class="pill-row">
+  <span class="pill info">Tip: All/None quickly edits a whole row</span>
+  <span class="pill warn">If On is set, matching Off is disabled</span>
+</div>
+""",
+                    unsafe_allow_html=True,
                 )
                 current_on_by_block: dict[str, str] = {}
                 for res, blk, rot in forced_set:
@@ -1012,6 +1206,15 @@ with tabs[2]:
 
             with sub_on:
                 st.caption("Select a single rotation per block (or blank for no On request).")
+                st.markdown(
+                    """
+<div class="pill-row">
+  <span class="pill info">One rotation max per block</span>
+  <span class="pill good">Blank value clears an On request</span>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
                 current_on_by_block: dict[str, str] = {}
                 for res, blk, rot in forced_set:
                     if res == selected_resident and blk not in current_on_by_block:
@@ -1316,7 +1519,7 @@ with tabs[3]:
     def _render_spec_mode(spec, title: str, *, allow_try: bool):
         preference_default_on = {"first_timer", "consec_full_mh", "no_sequential_year1_3"}
         mode_display = {
-            "always": "On (hard)",
+            "always": "Always (hard)",
             "if_able": "Try (soft)",
             "disabled": "Off",
         }
@@ -1334,13 +1537,15 @@ with tabs[3]:
         if default_mode not in options:
             default_mode = "always"
 
+        st.markdown(f"**{title}**")
         selection = st.radio(
-            title,
+            "Mode",
             options=options,
             format_func=lambda v: mode_display.get(v, v),
             horizontal=True,
             index=options.index(default_mode),
             key=f"mode_{spec.id}",
+            label_visibility="collapsed",
         )
         modes[spec.id] = selection
         return selection, st.empty()
@@ -1727,26 +1932,40 @@ with tabs[3]:
                 if spec.id not in ids:
                     continue
 
-                spec_params = _params_for(spec.id)
-                title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
-                spec_allow_try = allow_try or spec.id == "no_half_kir"
-                _selection, desc_slot = _render_spec_mode(spec, title=title, allow_try=spec_allow_try)
-
-                if tab_name in {"Coverage & Caps", "Track Rules", "Special Blocks", "Preferences"}:
-                    _render_spec_params(spec, num_blocks=num_blocks)
+                with st.container(border=True):
                     spec_params = _params_for(spec.id)
-                    _title2, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                    title, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                    spec_allow_try = allow_try or spec.id == "no_half_kir"
+                    _selection, _ = _render_spec_mode(spec, title=title, allow_try=spec_allow_try)
                     if description:
-                        desc_slot.caption(description)
-                    st.divider()
-                else:
-                    if description:
-                        desc_slot.caption(description)
+                        st.caption(description)
+
+                    if tab_name in {"Coverage & Caps", "Track Rules", "Special Blocks", "Preferences"}:
+                        _render_spec_params(spec, num_blocks=num_blocks)
+                        spec_params = _params_for(spec.id)
+                        _title2, description = _constraint_title_and_description(spec, spec_params, num_blocks=num_blocks)
+                        if description:
+                            st.caption(description)
+                        st.markdown('<p class="ui-card-note">Adjust values, then solve to validate impact.</p>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<p class="ui-card-note">Set to Always for strict enforcement, or Off to disable.</p>', unsafe_allow_html=True)
+                st.divider()
 
     cfg["gui"]["constraints"]["modes"] = modes
 
 with tabs[4]:
     st.subheader("Soft constraint priority")
+    with st.container(border=True):
+        st.caption("Only constraints set to Try appear here. Move higher-priority items up so they are protected first during tradeoffs.")
+        st.markdown(
+            """
+<div class="pill-row">
+  <span class="pill info">Higher = more protected</span>
+  <span class="pill warn">Lower objective score is better</span>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
     modes = cfg["gui"]["constraints"].get("modes", {})
     if_able_ids = [
         spec.id
@@ -1765,16 +1984,18 @@ with tabs[4]:
 
         for idx, cid in enumerate(priority):
             spec = next(spec for spec in CONSTRAINT_SPECS if spec.id == cid)
-            cols = st.columns([6, 1, 1])
-            cols[0].write(f"{idx + 1}. {_spec_label(spec)}")
-            if cols[1].button("Up", key=f"prio_up_{cid}") and idx > 0:
-                priority[idx - 1], priority[idx] = priority[idx], priority[idx - 1]
-                cfg["gui"]["constraints"]["soft_priority"] = priority
-                st.rerun()
-            if cols[2].button("Down", key=f"prio_dn_{cid}") and idx < len(priority) - 1:
-                priority[idx + 1], priority[idx] = priority[idx], priority[idx + 1]
-                cfg["gui"]["constraints"]["soft_priority"] = priority
-                st.rerun()
+            with st.container(border=True):
+                cols = st.columns([0.8, 6.0, 1.0, 1.0])
+                cols[0].markdown(f"**{idx + 1}**")
+                cols[1].write(_spec_label(spec))
+                if cols[2].button("Up", key=f"prio_up_{cid}") and idx > 0:
+                    priority[idx - 1], priority[idx] = priority[idx], priority[idx - 1]
+                    cfg["gui"]["constraints"]["soft_priority"] = priority
+                    st.rerun()
+                if cols[3].button("Down", key=f"prio_dn_{cid}") and idx < len(priority) - 1:
+                    priority[idx + 1], priority[idx] = priority[idx], priority[idx + 1]
+                    cfg["gui"]["constraints"]["soft_priority"] = priority
+                    st.rerun()
 
 if False:  # Checks tab removed
     """
@@ -2202,42 +2423,49 @@ with tabs[5]:
         if escape_cells:
             for col in safe_df.columns:
                 safe_df[col] = safe_df[col].apply(lambda v: html.escape(str(v)) if v is not None else "")
-        table_html = safe_df.to_html(index=False, escape=False, classes=table_class)
+        table_html = safe_df.to_html(index=False, escape=False, classes=f"ui-table {table_class}")
         st.markdown(
             f"""
-<style>
-table.{table_class} {{
-  width: 100%;
-  border-collapse: collapse;
-}}
-table.{table_class} th, table.{table_class} td {{
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  padding: 0.35rem 0.5rem;
-  vertical-align: top;
-  font-size: 0.92rem;
-}}
-table.{table_class} th {{
-  background: rgba(127, 127, 127, 0.10);
-  font-weight: 700;
-}}
-</style>
-{table_html}
+<div class="ui-table-wrap {html.escape(table_class)}-wrap">{table_html}</div>
 """,
             unsafe_allow_html=True,
         )
 
-    cfg["num_solutions"] = int(
-        st.number_input(
-            "Number of solutions",
-            min_value=1,
-            max_value=50,
-            value=int(cfg.get("num_solutions", 1)),
-            step=1,
-            key="num_solutions_input",
+    with st.container(border=True):
+        st.markdown("#### Solve status")
+        control_col, button_col = st.columns([2.3, 1.2], gap="small")
+        cfg["num_solutions"] = int(
+            control_col.number_input(
+                "Number of solutions",
+                min_value=1,
+                max_value=50,
+                value=int(cfg.get("num_solutions", 1)),
+                step=1,
+                key="num_solutions_input",
+            )
         )
-    )
-
-    run = st.button("Solve", type="primary", use_container_width=True, key="solve_btn")
+        run = button_col.button("Solve", type="primary", use_container_width=True, key="solve_btn")
+        if st.session_state.get("solve_result") is None:
+            st.markdown(
+                """
+<div class="pill-row">
+  <span class="pill info">Last run: not started</span>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+        else:
+            solve_result = st.session_state.get("solve_result")
+            solve_ok = not bool(getattr(solve_result, "diagnostic", None))
+            st.markdown(
+                f"""
+<div class="pill-row">
+  <span class="pill {'good' if solve_ok else 'bad'}">Last run: {'Feasible' if solve_ok else 'Infeasible'}</span>
+  <span class="pill info">Solutions requested: {int(cfg.get("num_solutions", 1))}</span>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
 
     if run:
         st.session_state.pop("solve_result", None)
@@ -2259,31 +2487,35 @@ table.{table_class} th {{
 
     result = st.session_state.get("solve_result")
     if result is None:
-        st.info("Click Solve to run the scheduler.")
+        with st.container(border=True):
+            st.info("Click Solve to run the scheduler.")
     else:
         if getattr(result, "warnings", None):
             st.warning("Input normalized with rounding:")
             st.markdown("\n".join(f"- {w}" for w in result.warnings))
         if result.diagnostic:
-            st.error("Model infeasible.")
-            st.markdown("**Conflicting constraints**")
-            st.dataframe(
-                pd.DataFrame(result.diagnostic.conflicting_constraints),
-                use_container_width=True,
-                hide_index=True,
-            )
-            if result.diagnostic.suggestions:
-                st.markdown("**Fast suggestions**")
+            with st.container(border=True):
+                st.error("Model infeasible.")
+                st.markdown("**Conflicting constraints**")
                 st.dataframe(
-                    pd.DataFrame(result.diagnostic.suggestions),
+                    pd.DataFrame(result.diagnostic.conflicting_constraints),
                     use_container_width=True,
                     hide_index=True,
                 )
+                if result.diagnostic.suggestions:
+                    st.markdown("**Fast suggestions**")
+                    st.dataframe(
+                        pd.DataFrame(result.diagnostic.suggestions),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                st.markdown('<p class="ui-card-note">Next step: relax strict requests/constraints or lower tight coverage caps.</p>', unsafe_allow_html=True)
         else:
-            st.success(f"Found {len(result.solutions)} solution(s).")
-            if not result.solutions:
-                st.warning("No solutions returned (unexpected without infeasibility diagnostic).")
-            else:
+            with st.container(border=True):
+                st.success(f"Found {len(result.solutions)} solution(s).")
+                if not result.solutions:
+                    st.warning("No solutions returned (unexpected without infeasibility diagnostic).")
+            if result.solutions:
                 pick_col, dl_col = st.columns([2.3, 2.4], gap="small")
                 with pick_col:
                     idx = st.selectbox(
@@ -2344,13 +2576,15 @@ table.{table_class} th {{
                     )
                 if schedule_input is not None:
                     obj_df, obj_total = _objective_breakdown(sol.objective or {}, schedule_input.weights)
-                    st.markdown(f"**Weighted objective score (lower is better): {obj_total}**")
+                    with st.container(border=True):
+                        st.markdown(f"**Weighted objective score (lower is better): {obj_total}**")
                     relaxed_ids = sorted(
                         [k[len("relax_") :] for k in (sol.objective or {}).keys() if str(k).startswith("relax_")],
                         key=lambda s: str(s).casefold(),
                     )
                     if not obj_df.empty:
-                        st.dataframe(obj_df, use_container_width=True, hide_index=True)
+                        with st.container(border=True):
+                            st.dataframe(obj_df, use_container_width=True, hide_index=True)
                     else:
                         if relaxed_ids:
                             st.caption("No weighted soft penalties in this solution (some Try-mode hard constraints were relaxed below).")
@@ -2358,17 +2592,18 @@ table.{table_class} th {{
                             st.caption("No soft penalties in this solution.")
                     if relaxed_ids:
                         label_by_id = {spec.id: spec.label for spec in CONSTRAINT_SPECS}
-                        st.warning(
-                            f"Relaxed {len(relaxed_ids)} Try-mode hard constraint(s) to find a feasible schedule."
-                        )
-                        st.dataframe(
-                            pd.DataFrame(
-                                [{"Constraint": label_by_id.get(cid, cid), "Id": cid} for cid in relaxed_ids],
-                                columns=["Constraint", "Id"],
-                            ),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
+                        with st.container(border=True):
+                            st.warning(
+                                f"Relaxed {len(relaxed_ids)} Try-mode hard constraint(s) to find a feasible schedule."
+                            )
+                            st.dataframe(
+                                pd.DataFrame(
+                                    [{"Constraint": label_by_id.get(cid, cid), "Id": cid} for cid in relaxed_ids],
+                                    columns=["Constraint", "Id"],
+                                ),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
 
                 st.markdown("**Assignments by Rotation**")
                 html_df = rot_df.copy()
@@ -2466,8 +2701,11 @@ table.{table_class} th {{
                             hex_color = _palette_hex(palette, t)
                             r, g, b = _hex_to_rgb01(hex_color)
                             luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                            text = "#111111" if luminance > 0.55 else "#ffffff"
-                            return f"background-color: {hex_color}; color: {text}; font-weight: 600;"
+                            text = "#111111" if luminance > 0.62 else "#ffffff"
+                            return (
+                                f"background-color: {hex_color}; color: {text}; font-weight: 600;"
+                                " border: 1px solid rgba(255,255,255,0.16);"
+                            )
 
                         def _bg_rot(value: int | float | None) -> str:
                             return _bg_from(value, rot_vmin, rot_vmax, _viridis)
@@ -2516,35 +2754,46 @@ with tabs[6]:
     if "calendar_start_date_picker" not in st.session_state:
         st.session_state["calendar_start_date_picker"] = default_start
 
-    st.date_input(
-        "Pick start date",
-        key="calendar_start_date_picker",
-    )
+    with st.container(border=True):
+        st.date_input(
+            "Pick start date",
+            key="calendar_start_date_picker",
+        )
 
-    picked = st.session_state.get("calendar_start_date_picker")
-    if not isinstance(picked, date):
-        picked = default_start
-        st.session_state["calendar_start_date_picker"] = picked
+        picked = st.session_state.get("calendar_start_date_picker")
+        if not isinstance(picked, date):
+            picked = default_start
+            st.session_state["calendar_start_date_picker"] = picked
 
-    cfg["gui"]["calendar"]["start_date"] = _format_mmddyy(picked)
+        cfg["gui"]["calendar"]["start_date"] = _format_mmddyy(picked)
 
-    block_labels = _block_labels(cfg)
-    block_ranges = _block_date_ranges(cfg, block_labels)
-    start_row = {"Date": "Start"}
-    end_row = {"Date": "End"}
-    for blk in block_labels:
-        r = block_ranges.get(blk)
-        if not r:
-            start_row[blk] = ""
-            end_row[blk] = ""
-        else:
-            start_row[blk] = _format_mmddyy(r[0])
-            end_row[blk] = _format_mmddyy(r[1])
-    st.dataframe(
-        pd.DataFrame([start_row, end_row], columns=["Date"] + block_labels),
-        use_container_width=True,
-        hide_index=True,
-    )
+        block_labels = _block_labels(cfg)
+        block_ranges = _block_date_ranges(cfg, block_labels)
+        start_row = {"Date": "Start"}
+        end_row = {"Date": "End"}
+        for blk in block_labels:
+            r = block_ranges.get(blk)
+            if not r:
+                start_row[blk] = ""
+                end_row[blk] = ""
+            else:
+                start_row[blk] = _format_mmddyy(r[0])
+                end_row[blk] = _format_mmddyy(r[1])
+
+        today = date.today()
+        active_block = None
+        for blk, rng in block_ranges.items():
+            if rng and rng[0] <= today <= rng[1]:
+                active_block = blk
+                break
+        if active_block:
+            st.info(f"Today ({_format_mmddyy(today)}) falls in {active_block}.")
+
+        st.dataframe(
+            pd.DataFrame([start_row, end_row], columns=["Date"] + block_labels),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 with tabs[7]:
     st.subheader("Save/Load Configuration")
@@ -2575,69 +2824,71 @@ with tabs[7]:
     load_col, save_col = st.columns(2, gap="large")
 
     with load_col:
-        st.markdown("### Load")
-        st.caption("Drag & drop a `.yml`/`.yaml` to preview, then apply it to the current session.")
-        if "uploader_nonce" not in st.session_state:
-            st.session_state["uploader_nonce"] = 0
-        uploader_key = f"config_uploader_{st.session_state['uploader_nonce']}"
-        uploaded = st.file_uploader(
-            "Drop YAML here",
-            type=["yml", "yaml"],
-            label_visibility="collapsed",
-            key=uploader_key,
-        )
+        with st.container(border=True):
+            st.markdown("### Load")
+            st.caption("Drag & drop a `.yml`/`.yaml` to preview, then apply it to the current session.")
+            if "uploader_nonce" not in st.session_state:
+                st.session_state["uploader_nonce"] = 0
+            uploader_key = f"config_uploader_{st.session_state['uploader_nonce']}"
+            uploaded = st.file_uploader(
+                "Drop YAML here",
+                type=["yml", "yaml"],
+                label_visibility="collapsed",
+                key=uploader_key,
+            )
 
-        if not uploaded:
-            # If the user clears the uploader (clicks the X), also clear any pending preview state.
-            st.session_state.pop("pending_cfg", None)
-            st.session_state.pop("pending_infer_ok", None)
-        else:
-            try:
-                loaded = yaml.safe_load(uploaded) or {}
-            except yaml.YAMLError as exc:
-                st.error(f"Failed to parse YAML: {exc}")
+            if not uploaded:
+                # If the user clears the uploader (clicks the X), also clear any pending preview state.
+                st.session_state.pop("pending_cfg", None)
+                st.session_state.pop("pending_infer_ok", None)
             else:
                 try:
-                    cfg_loaded, ok = prepare_config(loaded)
-                except Exception as exc:
-                    st.error(f"Invalid configuration: {exc}")
+                    loaded = yaml.safe_load(uploaded) or {}
+                except yaml.YAMLError as exc:
+                    st.error(f"Failed to parse YAML: {exc}")
                 else:
-                    st.session_state["pending_cfg"] = cfg_loaded
-                    st.session_state["pending_infer_ok"] = ok
+                    try:
+                        cfg_loaded, ok = prepare_config(loaded)
+                    except Exception as exc:
+                        st.error(f"Invalid configuration: {exc}")
+                    else:
+                        st.session_state["pending_cfg"] = cfg_loaded
+                        st.session_state["pending_infer_ok"] = ok
 
-        pending = st.session_state.get("pending_cfg")
-        if pending and uploaded:
-            st.success("Loaded file parsed successfully. Review and apply when ready.")
-            btn_apply, btn_discard = st.columns([1, 1])
-            if btn_apply.button("Apply loaded configuration", type="primary", use_container_width=True):
-                st.session_state["cfg"] = st.session_state.pop("pending_cfg")
-                st.session_state["infer_ok"] = st.session_state.pop("pending_infer_ok", True)
-                _clear_pending_and_uploader()
-                _reset_widget_state()
-                st.rerun()
-            if btn_discard.button("Discard", use_container_width=True):
-                _clear_pending_and_uploader()
-                st.rerun()
+            pending = st.session_state.get("pending_cfg")
+            if pending and uploaded:
+                st.success("Loaded file parsed successfully. Review and apply when ready.")
+                btn_apply, btn_discard = st.columns([1, 1])
+                if btn_apply.button("Apply loaded configuration", type="primary", use_container_width=True):
+                    st.session_state["cfg"] = st.session_state.pop("pending_cfg")
+                    st.session_state["infer_ok"] = st.session_state.pop("pending_infer_ok", True)
+                    _clear_pending_and_uploader()
+                    _reset_widget_state()
+                    st.rerun()
+                if btn_discard.button("Discard", use_container_width=True):
+                    _clear_pending_and_uploader()
+                    st.rerun()
 
     with save_col:
-        st.markdown("### Save")
-        st.caption("Download the current in-app configuration as a YAML file.")
-        default_filename = f"schedule-config-{date.today().isoformat()}.yml"
-        filename = st.text_input(
-            "Filename",
-            value=default_filename,
-            key="config_filename",
-        )
-        yaml_text = yaml.safe_dump(cfg, sort_keys=False)
-        saved = st.download_button(
-            "Download configuration",
-            data=yaml_text,
-            file_name=filename or default_filename,
-            mime="text/yaml",
-            use_container_width=True,
-        )
-        if saved:
-            st.info(f"Downloaded. If you want the CLI default to pick it up, move it into:\n{os.getcwd()}")
+        with st.container(border=True):
+            st.markdown("### Save")
+            st.caption("Download the current in-app configuration as a YAML file.")
+            default_filename = f"schedule-config-{date.today().isoformat()}.yml"
+            filename = st.text_input(
+                "Filename",
+                value=default_filename,
+                key="config_filename",
+            )
+            yaml_text = yaml.safe_dump(cfg, sort_keys=False)
+            saved = st.download_button(
+                "Download configuration",
+                data=yaml_text,
+                file_name=filename or default_filename,
+                mime="text/yaml",
+                use_container_width=True,
+            )
+            if saved:
+                st.info(f"Downloaded. If you want the CLI default to pick it up, move it into:\n{os.getcwd()}")
 
     with st.expander("Current YAML", expanded=False):
         st.code(yaml.safe_dump(st.session_state["cfg"], sort_keys=False), language="yaml")
@@ -2649,6 +2900,32 @@ with tabs[7]:
 with tabs[8]:
     st.subheader("Instructions")
     st.caption("A quick guide for using the scheduler GUI (no YAML editing required).")
+    with st.container(border=True):
+        st.markdown("#### Table of contents")
+        st.markdown(
+            """
+            - Quick start
+            - Key concepts
+            - Residents
+            - Class/Year Assignments + pitfalls
+            - Requests
+            - Constraints
+            - Prioritization
+            - Solve + troubleshooting
+            - Calendar
+            - Save/Load Configuration
+            - Constraints reference
+            """
+        )
+        st.markdown(
+            """
+<div class="pill-row">
+  <span class="pill info">Tip: follow tabs left → right</span>
+  <span class="pill warn">Save YAML before refresh/close</span>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
 
     with st.expander("Quick start (recommended order)", expanded=True):
         st.markdown(
