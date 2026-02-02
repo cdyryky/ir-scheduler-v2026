@@ -30,7 +30,7 @@ from ir_scheduler import (
     solve_schedule,
 )
 
-APP_TITLE = "IR Schedulator 5000"
+APP_TITLE = "IR Scheddy Maker"
 
 
 DISPLAY_COLUMNS = ROTATION_COLUMNS + ["Total Blocks"]
@@ -366,8 +366,8 @@ st.markdown(
     .hero {
         position: relative;
         border-radius: 16px;
-        padding: 0.9rem 1.15rem;
-        margin: 0 0 0.7rem 0;
+        padding: 0.55rem 1.0rem;
+        margin: 0 0 0.45rem 0;
         background:
           radial-gradient(900px 260px at 10% 0%, rgba(59, 130, 246, 0.16), rgba(0,0,0,0) 60%),
           radial-gradient(900px 260px at 90% 10%, rgba(168, 85, 247, 0.14), rgba(0,0,0,0) 60%),
@@ -402,7 +402,7 @@ st.markdown(
         font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
         font-weight: 800;
         letter-spacing: -0.02em;
-        font-size: clamp(20px, 2.0vw, 32px);
+        font-size: clamp(18px, 1.75vw, 28px);
         line-height: 1.1;
         color: var(--text-color);
     }
@@ -450,7 +450,7 @@ cfg = st.session_state["cfg"]
 if not st.session_state.get("infer_ok", True):
     st.warning("Could not infer IR1-IR5 names from residents; using defaults.")
 
-st.divider()
+st.markdown('<hr style="margin: 0.35rem 0 0.45rem 0; opacity: 0.35;">', unsafe_allow_html=True)
 
 resident_error = None
 tabs = st.tabs(
