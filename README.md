@@ -36,6 +36,40 @@ To launch the GUI:
 streamlit run app.py
 ```
 
+## GUI Modes and Config Files
+
+- The app now has two page modes in the header: `IR` (default) and `DR`.
+- IR and DR use separate in-memory state and separate YAML files.
+- Use IR mode to load/save IR scheduler configs (recommended filename: `ir-config-YYYY-MM-DD.yml`).
+- Use DR mode to load/save DR page configs (recommended filename: `dr-config-YYYY-MM-DD.yml`).
+- Do not mix IR/DR YAML files across modes.
+
+### DR config schema (GUI-only, solver not wired yet)
+
+DR mode currently supports residents, vacation requests, calendar, and save/load. DR solving/constraints are placeholders for future work.
+
+```yaml
+config_type: DR
+schema_version: 1
+blocks: 13
+gui:
+  calendar:
+    start_date: 06/29/26
+  residents:
+    year_counts: {Y1: 10, Y2: 10, Y3: 9, Y4: 8}
+    years:
+      Y1:
+        - {name: Bansal, track: DR}
+  requests:
+    vacation:
+      max_requests_per_resident: 6
+      awards_per_resident: 4
+      by_resident:
+        Bansal:
+          - {week: B0.1, rank: 1}
+          - {week: B3.2, rank: 2}
+```
+
 ## Input Format
 
 The solver expects a YAML file with the following keys:

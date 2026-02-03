@@ -10,6 +10,16 @@ import streamlit as st
 import yaml
 import pandas as pd
 
+from dr_config import (
+    DEFAULT_DR_AWARDS_PER_RESIDENT,
+    DEFAULT_DR_MAX_VACATION_REQUESTS,
+    DEFAULT_DR_YEAR_COUNTS,
+    DR_RESIDENT_TRACKS,
+    DR_YEAR_LABELS,
+    default_dr_config,
+    prepare_dr_config,
+    validate_dr_resident_names,
+)
 from ir_config import (
     CLASS_TRACKS,
     DEFAULT_CLASS_REQUIREMENTS,
@@ -129,10 +139,16 @@ table.{table_class} th {{
 
 
 def _ensure_cfg_state():
-    if "cfg" not in st.session_state:
-        cfg, ok = prepare_config(default_config())
-        st.session_state["cfg"] = cfg
-        st.session_state["infer_ok"] = ok
+    if "cfg_ir" not in st.session_state:
+        cfg_ir, ok_ir = prepare_config(default_config())
+        st.session_state["cfg_ir"] = cfg_ir
+        st.session_state["infer_ok_ir"] = ok_ir
+    if "cfg_dr" not in st.session_state:
+        cfg_dr, ok_dr = prepare_dr_config(default_dr_config())
+        st.session_state["cfg_dr"] = cfg_dr
+        st.session_state["infer_ok_dr"] = ok_dr
+    if "page_mode" not in st.session_state:
+        st.session_state["page_mode"] = "IR"
 
 
 def _block_labels(cfg: dict) -> list[str]:
@@ -363,6 +379,471 @@ def _render_block_label_cell(container, block: str, r: Optional[tuple[date, date
     )
 
 
+def _dr_year_number(year_label: str) -> int:
+    try:
+        return int(str(year_label).lstrip("Yy"))
+    except Exception:
+        return 0
+
+
+def _dr_resident_rows(cfg: dict) -> list[dict]:
+    gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else {}
+    residents = gui.get("residents") if isinstance(gui.get("residents"), dict) else {}
+    years = residents.get("years") if isinstance(residents.get("years"), dict) else {}
+    out: list[dict] = []
+    for year in DR_YEAR_LABELS:
+        rows = years.get(year)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name", "") or "").strip()
+            track = str(row.get("track", "DR") or "DR").strip().upper()
+            if not name:
+                continue
+            if track not in DR_RESIDENT_TRACKS:
+                track = "DR"
+            out.append({"Year": year, "Name": name, "Track": track})
+    return out
+
+
+def _dr_resize_year_rows(year_label: str, rows: Any, target_count: int) -> list[dict]:
+    out: list[dict] = []
+    if isinstance(rows, list):
+        for row in rows:
+            if len(out) >= target_count:
+                break
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name", "") or "").strip()
+            track = str(row.get("track", "DR") or "DR").strip().upper()
+            if track not in DR_RESIDENT_TRACKS:
+                track = "DR"
+            if not name:
+                continue
+            out.append({"name": name, "track": track})
+
+    used = {str(r["name"]).strip() for r in out if str(r.get("name", "")).strip()}
+    idx = 1
+    while len(out) < target_count:
+        candidate = f"{year_label}-{idx}"
+        idx += 1
+        if candidate in used:
+            continue
+        used.add(candidate)
+        out.append({"name": candidate, "track": "DR"})
+    return out[:target_count]
+
+
+def _dr_week_labels(block_labels: list[str]) -> list[str]:
+    out: list[str] = []
+    for block in block_labels:
+        for week_idx in range(4):
+            out.append(f"{block}.{week_idx}")
+    return out
+
+
+def _dr_parse_vacation_rows(rows: list[dict], valid_weeks: set[str], max_requests: int) -> tuple[list[dict], list[str]]:
+    out: list[dict] = []
+    errors: list[str] = []
+    seen_weeks: set[str] = set()
+    seen_ranks: set[int] = set()
+
+    for idx, row in enumerate(rows, start=1):
+        week_raw = row.get("week", "")
+        week = "" if _is_na(week_raw) else str(week_raw or "").strip()
+        rank_raw = row.get("rank", None)
+        if _is_na(rank_raw):
+            rank_raw = None
+        if not week:
+            continue
+        if week not in valid_weeks:
+            errors.append(f"Row {idx}: unknown week '{week}'.")
+            continue
+        try:
+            rank = int(float(rank_raw))
+        except Exception:
+            errors.append(f"Row {idx}: rank is required when week is selected.")
+            continue
+        if rank < 1 or rank > max_requests:
+            errors.append(f"Row {idx}: rank must be between 1 and {max_requests}.")
+            continue
+        if week in seen_weeks:
+            errors.append(f"Row {idx}: week '{week}' is duplicated.")
+            continue
+        if rank in seen_ranks:
+            errors.append(f"Row {idx}: rank {rank} is duplicated.")
+            continue
+        seen_weeks.add(week)
+        seen_ranks.add(rank)
+        out.append({"week": week, "rank": rank})
+
+    out.sort(key=lambda item: item["rank"])
+    if len(out) > max_requests:
+        errors.append(f"At most {max_requests} requested weeks are allowed.")
+        out = out[:max_requests]
+    return out, errors
+
+
+def _render_dr_page(cfg: dict) -> None:
+    tabs = st.tabs(
+        [
+            "Residents",
+            "Class/Year Assignments",
+            "Requests",
+            "Constraints",
+            "Prioritization",
+            "Solve",
+            "Calendar",
+            "Save/Load Configuration",
+            "Instructions",
+        ]
+    )
+
+    with tabs[0]:
+        st.subheader("Residents")
+        st.caption("Configure DR resident years, names, and tracks.")
+
+        gui = cfg.setdefault("gui", {})
+        residents = gui.setdefault("residents", {})
+        year_counts = residents.setdefault("year_counts", dict(DEFAULT_DR_YEAR_COUNTS))
+        years = residents.setdefault("years", {year: [] for year in DR_YEAR_LABELS})
+
+        cols = st.columns(4)
+        for idx, year in enumerate(DR_YEAR_LABELS):
+            year_num = _dr_year_number(year)
+            default_value = int(year_counts.get(year, DEFAULT_DR_YEAR_COUNTS[year]))
+            count = int(
+                cols[idx].number_input(
+                    f"Year {year_num} count",
+                    min_value=0,
+                    max_value=100,
+                    value=default_value,
+                    step=1,
+                    key=f"dr_year_count_{year}",
+                )
+            )
+            year_counts[year] = count
+            years[year] = _dr_resize_year_rows(year, years.get(year), count)
+
+        for year in DR_YEAR_LABELS:
+            year_num = _dr_year_number(year)
+            st.markdown(f"#### Year {year_num}")
+            rows = years.get(year, [])
+            df = pd.DataFrame(rows, columns=["name", "track"])
+            edited_df = st.data_editor(
+                df,
+                hide_index=True,
+                num_rows="fixed",
+                use_container_width=True,
+                key=f"dr_residents_editor_{year}_{len(rows)}",
+                column_config={
+                    "name": st.column_config.TextColumn("Name"),
+                    "track": st.column_config.SelectboxColumn("Track", options=DR_RESIDENT_TRACKS),
+                },
+            )
+
+            normalized_rows: list[dict] = []
+            for idx, row in enumerate(edited_df.to_dict("records"), start=1):
+                name = str(row.get("name", "") or "").strip()
+                track = str(row.get("track", "DR") or "DR").strip().upper()
+                if track not in DR_RESIDENT_TRACKS:
+                    track = "DR"
+                if not name:
+                    name = f"{year}-{idx}"
+                normalized_rows.append({"name": name, "track": track})
+            years[year] = normalized_rows
+
+        resident_error = validate_dr_resident_names(cfg)
+        if resident_error:
+            st.error(resident_error)
+        else:
+            st.success("Resident roster is valid.")
+
+    with tabs[1]:
+        st.subheader("Class/Year Assignments")
+        cfg.setdefault("gui", {}).setdefault("class_year_assignments", {})
+        st.info("Coming soon: DR class/year assignment requirements.")
+
+    with tabs[2]:
+        st.subheader("Requests")
+        st.caption("Vacation requests only in this phase. Other request types are coming later.")
+
+        gui = cfg.setdefault("gui", {})
+        requests = gui.setdefault("requests", {})
+        vacation = requests.setdefault("vacation", {})
+        by_resident = vacation.setdefault("by_resident", {})
+        if not isinstance(by_resident, dict):
+            by_resident = {}
+            vacation["by_resident"] = by_resident
+
+        max_requests_default = int(vacation.get("max_requests_per_resident", DEFAULT_DR_MAX_VACATION_REQUESTS))
+        max_requests = int(
+            st.number_input(
+                "Max requested weeks per resident",
+                min_value=1,
+                max_value=52,
+                value=max_requests_default,
+                step=1,
+                key="dr_vacation_max_requests",
+            )
+        )
+        vacation["max_requests_per_resident"] = max_requests
+        vacation["awards_per_resident"] = DEFAULT_DR_AWARDS_PER_RESIDENT
+        st.caption(
+            f"Each resident can request up to {max_requests} week(s). "
+            f"Top {DEFAULT_DR_AWARDS_PER_RESIDENT} ranked weeks are the current preview awards."
+        )
+
+        resident_rows = _dr_resident_rows(cfg)
+        resident_names = [r["Name"] for r in resident_rows]
+        valid_resident_names = set(resident_names)
+        for key in list(by_resident.keys()):
+            if key not in valid_resident_names:
+                del by_resident[key]
+
+        if not resident_names:
+            st.info("Add DR residents before entering requests.")
+        else:
+            selected_name = st.selectbox(
+                "Resident",
+                options=resident_names,
+                key="dr_vacation_selected_resident",
+            )
+
+            block_labels = _block_labels(cfg)
+            week_labels = _dr_week_labels(block_labels)
+            week_options = [""] + week_labels
+            valid_weeks = set(week_labels)
+
+            current_entries = by_resident.get(selected_name, [])
+            if not isinstance(current_entries, list):
+                current_entries = []
+
+            rows = [{"week": "", "rank": None} for _ in range(max_requests)]
+            for idx, entry in enumerate(current_entries[:max_requests]):
+                if not isinstance(entry, dict):
+                    continue
+                rows[idx] = {
+                    "week": str(entry.get("week", "") or "").strip(),
+                    "rank": entry.get("rank", None),
+                }
+
+            edited_df = st.data_editor(
+                pd.DataFrame(rows, columns=["week", "rank"]),
+                hide_index=True,
+                num_rows="fixed",
+                use_container_width=True,
+                key=f"dr_vacation_editor_{_keyify(selected_name)}_{max_requests}",
+                column_config={
+                    "week": st.column_config.SelectboxColumn("Week", options=week_options),
+                    "rank": st.column_config.NumberColumn(
+                        "Rank",
+                        min_value=1,
+                        max_value=max_requests,
+                        step=1,
+                        help="Use unique ranks 1..N.",
+                    ),
+                },
+            )
+
+            parsed_rows, row_errors = _dr_parse_vacation_rows(
+                edited_df.to_dict("records"),
+                valid_weeks,
+                max_requests=max_requests,
+            )
+            if row_errors:
+                st.error("Please fix vacation request issues before saving this resident.")
+                st.markdown("\n".join(f"- {err}" for err in row_errors))
+            else:
+                if parsed_rows:
+                    by_resident[selected_name] = parsed_rows
+                elif selected_name in by_resident:
+                    del by_resident[selected_name]
+
+            saved_rows = by_resident.get(selected_name, [])
+            awarded = [entry["week"] for entry in saved_rows[:DEFAULT_DR_AWARDS_PER_RESIDENT] if isinstance(entry, dict)]
+            awarded_text = ", ".join(awarded) if awarded else "None yet"
+            st.markdown(f"**Award preview ({DEFAULT_DR_AWARDS_PER_RESIDENT} weeks):** {awarded_text}")
+
+            if saved_rows:
+                st.dataframe(
+                    pd.DataFrame(saved_rows, columns=["week", "rank"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+    with tabs[3]:
+        st.subheader("Constraints")
+        cfg.setdefault("gui", {}).setdefault("constraints", {})
+        st.info("Coming soon: DR-specific constraints.")
+
+    with tabs[4]:
+        st.subheader("Prioritization")
+        cfg.setdefault("gui", {}).setdefault("prioritization", {})
+        st.info("Coming soon: DR prioritization controls.")
+
+    with tabs[5]:
+        st.subheader("Solve")
+        cfg.setdefault("gui", {}).setdefault("solve", {})
+        st.info("Coming soon: DR solver integration.")
+
+    with tabs[6]:
+        st.subheader("Calendar")
+        st.caption("Choose the start date for block B0. Each block is 4 weeks (28 days).")
+
+        gui = cfg.setdefault("gui", {})
+        gui.setdefault("calendar", {})
+
+        default_start = _calendar_start_date(cfg) or date(2026, 6, 29)
+        if "dr_calendar_start_date_picker" not in st.session_state:
+            st.session_state["dr_calendar_start_date_picker"] = default_start
+
+        st.date_input("Pick start date", key="dr_calendar_start_date_picker")
+
+        picked = st.session_state.get("dr_calendar_start_date_picker")
+        if not isinstance(picked, date):
+            picked = default_start
+            st.session_state["dr_calendar_start_date_picker"] = picked
+        cfg["gui"]["calendar"]["start_date"] = _format_mmddyy(picked)
+
+        block_labels = _block_labels(cfg)
+        block_ranges = _block_date_ranges(cfg, block_labels)
+        start_row = {"Date": "Start"}
+        end_row = {"Date": "End"}
+        for blk in block_labels:
+            r = block_ranges.get(blk)
+            start_row[blk] = _format_mmddyy(r[0]) if r else ""
+            end_row[blk] = _format_mmddyy(r[1]) if r else ""
+        st.dataframe(
+            pd.DataFrame([start_row, end_row], columns=["Date"] + block_labels),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        week_rows: list[dict] = []
+        for blk in block_labels:
+            b_range = block_ranges.get(blk)
+            if not b_range:
+                continue
+            for week_idx in range(4):
+                week_start = b_range[0] + timedelta(days=7 * week_idx)
+                week_end = week_start + timedelta(days=6)
+                week_rows.append(
+                    {
+                        "Week": f"{blk}.{week_idx}",
+                        "Start": _format_mmddyy(week_start),
+                        "End": _format_mmddyy(week_end),
+                    }
+                )
+        st.markdown("**Weekly dates**")
+        st.dataframe(
+            pd.DataFrame(week_rows, columns=["Week", "Start", "End"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with tabs[7]:
+        st.subheader("Save/Load Configuration")
+
+        def _reset_dr_widget_state() -> None:
+            prefixes = (
+                "dr_year_",
+                "dr_residents_editor_",
+                "dr_vacation_",
+                "dr_calendar_",
+                "dr_config_",
+            )
+            for key in list(st.session_state.keys()):
+                if key.startswith(prefixes):
+                    del st.session_state[key]
+
+        def _clear_dr_pending_and_uploader() -> None:
+            st.session_state.pop("pending_cfg_dr", None)
+            st.session_state.pop("pending_infer_ok_dr", None)
+            st.session_state["uploader_nonce_dr"] = int(st.session_state.get("uploader_nonce_dr", 0)) + 1
+
+        load_col, save_col = st.columns(2, gap="large")
+
+        with load_col:
+            st.markdown("### Load")
+            st.caption("Drag & drop a DR `.yml`/`.yaml` to preview, then apply it.")
+            if "uploader_nonce_dr" not in st.session_state:
+                st.session_state["uploader_nonce_dr"] = 0
+            uploader_key = f"dr_config_uploader_{st.session_state['uploader_nonce_dr']}"
+            uploaded = st.file_uploader(
+                "Drop DR YAML here",
+                type=["yml", "yaml"],
+                label_visibility="collapsed",
+                key=uploader_key,
+            )
+
+            if not uploaded:
+                st.session_state.pop("pending_cfg_dr", None)
+                st.session_state.pop("pending_infer_ok_dr", None)
+            else:
+                try:
+                    loaded = yaml.safe_load(uploaded) or {}
+                except yaml.YAMLError as exc:
+                    st.error(f"Failed to parse YAML: {exc}")
+                else:
+                    if not isinstance(loaded, dict) or str(loaded.get("config_type", "")).upper() != "DR":
+                        st.error("This file is not a DR configuration (missing `config_type: DR`).")
+                    else:
+                        try:
+                            cfg_loaded, ok = prepare_dr_config(loaded)
+                        except Exception as exc:
+                            st.error(f"Invalid DR configuration: {exc}")
+                        else:
+                            st.session_state["pending_cfg_dr"] = cfg_loaded
+                            st.session_state["pending_infer_ok_dr"] = ok
+
+            pending = st.session_state.get("pending_cfg_dr")
+            if pending and uploaded:
+                st.success("Loaded DR file parsed successfully. Review and apply when ready.")
+                btn_apply, btn_discard = st.columns([1, 1])
+                if btn_apply.button("Apply loaded DR configuration", type="primary", use_container_width=True):
+                    st.session_state["cfg_dr"] = st.session_state.pop("pending_cfg_dr")
+                    st.session_state["infer_ok_dr"] = st.session_state.pop("pending_infer_ok_dr", True)
+                    _clear_dr_pending_and_uploader()
+                    _reset_dr_widget_state()
+                    st.rerun()
+                if btn_discard.button("Discard", use_container_width=True):
+                    _clear_dr_pending_and_uploader()
+                    st.rerun()
+
+        with save_col:
+            st.markdown("### Save")
+            st.caption("Download the current DR configuration as YAML.")
+            default_filename = f"dr-config-{date.today().isoformat()}.yml"
+            filename = st.text_input(
+                "Filename",
+                value=default_filename,
+                key="dr_config_filename",
+            )
+            yaml_text = yaml.safe_dump(cfg, sort_keys=False)
+            st.download_button(
+                "Download DR configuration",
+                data=yaml_text,
+                file_name=filename or default_filename,
+                mime="text/yaml",
+                use_container_width=True,
+            )
+
+        with st.expander("Current DR YAML", expanded=False):
+            st.code(yaml.safe_dump(st.session_state["cfg_dr"], sort_keys=False), language="yaml")
+            if st.session_state.get("pending_cfg_dr"):
+                st.markdown("---")
+                st.caption("Pending DR YAML (not applied yet)")
+                st.code(yaml.safe_dump(st.session_state["pending_cfg_dr"], sort_keys=False), language="yaml")
+
+    with tabs[8]:
+        st.subheader("Instructions")
+        cfg.setdefault("gui", {}).setdefault("instructions", {})
+        st.info("Coming soon: DR page instructions.")
+
+
 st.set_page_config(page_title=APP_TITLE_TEXT, layout="wide")
 
 st.markdown(
@@ -470,23 +951,42 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+_ensure_cfg_state()
+
+page_mode_badge = str(st.session_state.get("page_mode", "IR") or "IR").upper()
+if page_mode_badge not in {"IR", "DR"}:
+    page_mode_badge = "IR"
+    st.session_state["page_mode"] = "IR"
+
 st.markdown(
     f"""
     <div class="hero">
       <div class="hero-row">
         <h1 class="hero-title">{APP_TITLE_DISPLAY_HTML}</h1>
-        <div class="hero-badge">CONFIG</div>
+        <div class="hero-badge">{page_mode_badge}</div>
       </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-_ensure_cfg_state()
+mode_cols = st.columns([7, 2])
+with mode_cols[1]:
+    st.radio(
+        "Page Mode",
+        options=["IR", "DR"],
+        horizontal=True,
+        key="page_mode",
+        label_visibility="collapsed",
+    )
 
-cfg = st.session_state["cfg"]
+if st.session_state.get("page_mode") == "DR":
+    _render_dr_page(st.session_state["cfg_dr"])
+    st.stop()
 
-if not st.session_state.get("infer_ok", True):
+cfg = st.session_state["cfg_ir"]
+
+if not st.session_state.get("infer_ok_ir", True):
     st.warning("Could not infer IR1-IR5 names from residents; using defaults.")
 
 st.markdown('<hr style="margin: 0.35rem 0 0.45rem 0; opacity: 0.35;">', unsafe_allow_html=True)
@@ -2552,7 +3052,6 @@ with tabs[7]:
     def _reset_widget_state() -> None:
         prefixes = (
             "ir_",
-            "dr_",
             "requests_",
             "calendar_",
             "cparam_",
@@ -2568,18 +3067,18 @@ with tabs[7]:
                 del st.session_state[key]
 
     def _clear_pending_and_uploader() -> None:
-        st.session_state.pop("pending_cfg", None)
-        st.session_state.pop("pending_infer_ok", None)
-        st.session_state["uploader_nonce"] = int(st.session_state.get("uploader_nonce", 0)) + 1
+        st.session_state.pop("pending_cfg_ir", None)
+        st.session_state.pop("pending_infer_ok_ir", None)
+        st.session_state["uploader_nonce_ir"] = int(st.session_state.get("uploader_nonce_ir", 0)) + 1
 
     load_col, save_col = st.columns(2, gap="large")
 
     with load_col:
         st.markdown("### Load")
         st.caption("Drag & drop a `.yml`/`.yaml` to preview, then apply it to the current session.")
-        if "uploader_nonce" not in st.session_state:
-            st.session_state["uploader_nonce"] = 0
-        uploader_key = f"config_uploader_{st.session_state['uploader_nonce']}"
+        if "uploader_nonce_ir" not in st.session_state:
+            st.session_state["uploader_nonce_ir"] = 0
+        uploader_key = f"ir_config_uploader_{st.session_state['uploader_nonce_ir']}"
         uploaded = st.file_uploader(
             "Drop YAML here",
             type=["yml", "yaml"],
@@ -2589,29 +3088,32 @@ with tabs[7]:
 
         if not uploaded:
             # If the user clears the uploader (clicks the X), also clear any pending preview state.
-            st.session_state.pop("pending_cfg", None)
-            st.session_state.pop("pending_infer_ok", None)
+            st.session_state.pop("pending_cfg_ir", None)
+            st.session_state.pop("pending_infer_ok_ir", None)
         else:
             try:
                 loaded = yaml.safe_load(uploaded) or {}
             except yaml.YAMLError as exc:
                 st.error(f"Failed to parse YAML: {exc}")
             else:
-                try:
-                    cfg_loaded, ok = prepare_config(loaded)
-                except Exception as exc:
-                    st.error(f"Invalid configuration: {exc}")
+                if isinstance(loaded, dict) and str(loaded.get("config_type", "")).upper() == "DR":
+                    st.error("This file is a DR configuration. Load it from DR mode.")
                 else:
-                    st.session_state["pending_cfg"] = cfg_loaded
-                    st.session_state["pending_infer_ok"] = ok
+                    try:
+                        cfg_loaded, ok = prepare_config(loaded)
+                    except Exception as exc:
+                        st.error(f"Invalid configuration: {exc}")
+                    else:
+                        st.session_state["pending_cfg_ir"] = cfg_loaded
+                        st.session_state["pending_infer_ok_ir"] = ok
 
-        pending = st.session_state.get("pending_cfg")
+        pending = st.session_state.get("pending_cfg_ir")
         if pending and uploaded:
             st.success("Loaded file parsed successfully. Review and apply when ready.")
             btn_apply, btn_discard = st.columns([1, 1])
             if btn_apply.button("Apply loaded configuration", type="primary", use_container_width=True):
-                st.session_state["cfg"] = st.session_state.pop("pending_cfg")
-                st.session_state["infer_ok"] = st.session_state.pop("pending_infer_ok", True)
+                st.session_state["cfg_ir"] = st.session_state.pop("pending_cfg_ir")
+                st.session_state["infer_ok_ir"] = st.session_state.pop("pending_infer_ok_ir", True)
                 _clear_pending_and_uploader()
                 _reset_widget_state()
                 st.rerun()
@@ -2622,13 +3124,15 @@ with tabs[7]:
     with save_col:
         st.markdown("### Save")
         st.caption("Download the current in-app configuration as a YAML file.")
-        default_filename = f"schedule-config-{date.today().isoformat()}.yml"
+        default_filename = f"ir-config-{date.today().isoformat()}.yml"
         filename = st.text_input(
             "Filename",
             value=default_filename,
-            key="config_filename",
+            key="ir_config_filename",
         )
-        yaml_text = yaml.safe_dump(cfg, sort_keys=False)
+        cfg_for_save = dict(cfg)
+        cfg_for_save["config_type"] = "IR"
+        yaml_text = yaml.safe_dump(cfg_for_save, sort_keys=False)
         saved = st.download_button(
             "Download configuration",
             data=yaml_text,
@@ -2640,11 +3144,11 @@ with tabs[7]:
             st.info(f"Downloaded. If you want the CLI default to pick it up, move it into:\n{os.getcwd()}")
 
     with st.expander("Current YAML", expanded=False):
-        st.code(yaml.safe_dump(st.session_state["cfg"], sort_keys=False), language="yaml")
-        if st.session_state.get("pending_cfg"):
+        st.code(yaml.safe_dump(st.session_state["cfg_ir"], sort_keys=False), language="yaml")
+        if st.session_state.get("pending_cfg_ir"):
             st.markdown("---")
             st.caption("Pending YAML (not applied yet)")
-            st.code(yaml.safe_dump(st.session_state["pending_cfg"], sort_keys=False), language="yaml")
+            st.code(yaml.safe_dump(st.session_state["pending_cfg_ir"], sort_keys=False), language="yaml")
 
 with tabs[8]:
     st.subheader("Instructions")
