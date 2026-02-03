@@ -29,13 +29,12 @@
 
       .item {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 0.5rem;
         border: 1px solid var(--border);
         border-radius: 8px;
         background: var(--bg);
         padding: 0.45rem 0.6rem;
-        cursor: grab;
         user-select: none;
       }
 
@@ -47,15 +46,63 @@
         opacity: 0.6;
       }
 
-      .item.drop-target {
-        border-color: #2563eb;
-        background: var(--drag-bg);
+      .drop-line {
+        position: relative;
+        height: 0.55rem;
+        margin: 0.05rem 0;
+      }
+
+      .drop-line::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        border-top: 2px solid transparent;
+      }
+
+      .drop-line.active::before {
+        border-top-color: #2563eb;
+      }
+
+      .drop-line.active::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: #2563eb;
+        left: 0;
       }
 
       .handle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.65rem;
+        height: 1.65rem;
+        border: 1px solid var(--border);
+        border-radius: 6px;
         color: var(--muted);
+        background: #f9fafb;
         font-weight: 700;
         letter-spacing: 0.02em;
+        cursor: grab;
+        flex-shrink: 0;
+      }
+
+      .handle:active {
+        cursor: grabbing;
+      }
+
+      .content {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        gap: 0.15rem;
       }
 
       .rank {
@@ -67,6 +114,14 @@
 
       .label {
         font-size: 0.9rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .subtitle {
+        font-size: 0.78rem;
+        color: var(--muted);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -94,8 +149,10 @@
 
       let items = [];
       let dragIndex = null;
+      let insertionIndex = null;
 
       const root = document.getElementById("root");
+      let dropLineElements = [];
 
       function sendMessage(type, data = {}) {
         window.parent.postMessage(
@@ -121,23 +178,84 @@
         if (!Array.isArray(raw)) {
           return [];
         }
-        return raw.map((item) => String(item || ""));
+        return raw
+          .map((item) => {
+            if (item && typeof item === "object") {
+              const id = String(item.id || "");
+              if (!id) {
+                return null;
+              }
+              return {
+                id,
+                label: String(item.label || id),
+                subtitle: String(item.subtitle || ""),
+              };
+            }
+            const text = String(item || "");
+            if (!text) {
+              return null;
+            }
+            return {
+              id: text,
+              label: text,
+              subtitle: "",
+            };
+          })
+          .filter(Boolean);
       }
 
       function reorder(fromIndex, toIndex) {
-        if (fromIndex === toIndex || fromIndex == null || toIndex == null) {
+        if (fromIndex == null || toIndex == null) {
           return;
         }
         const next = [...items];
         const moved = next.splice(fromIndex, 1)[0];
-        next.splice(toIndex, 0, moved);
+        let insertAt = toIndex;
+        if (insertAt > fromIndex) {
+          insertAt -= 1;
+        }
+        if (insertAt < 0) {
+          insertAt = 0;
+        }
+        if (insertAt > next.length) {
+          insertAt = next.length;
+        }
+        next.splice(insertAt, 0, moved);
+        if (next.length === items.length && next.every((item, idx) => item.id === items[idx].id)) {
+          return;
+        }
         items = next;
         render();
-        setComponentValue(items);
+        setComponentValue(items.map((item) => item.id));
+      }
+
+      function setInsertionLine(index) {
+        if (insertionIndex === index) {
+          return;
+        }
+        insertionIndex = index;
+        dropLineElements.forEach((line, idx) => {
+          if (!line) return;
+          if (idx === insertionIndex) {
+            line.classList.add("active");
+          } else {
+            line.classList.remove("active");
+          }
+        });
+      }
+
+      function clearInsertionLine() {
+        insertionIndex = null;
+        dropLineElements.forEach((line) => {
+          if (line) {
+            line.classList.remove("active");
+          }
+        });
       }
 
       function render() {
         root.innerHTML = "";
+        dropLineElements = [];
         const list = document.createElement("div");
         list.className = "list";
 
@@ -151,28 +269,45 @@
           return;
         }
 
-        items.forEach((label, idx) => {
+        const firstLine = document.createElement("div");
+        firstLine.className = "drop-line";
+        dropLineElements.push(firstLine);
+        list.appendChild(firstLine);
+
+        items.forEach((entry, idx) => {
           const item = document.createElement("div");
           item.className = "item";
-          item.setAttribute("draggable", "true");
 
-          const handle = document.createElement("span");
+          const handle = document.createElement("div");
           handle.className = "handle";
+          handle.setAttribute("draggable", "true");
           handle.textContent = "\u2630";
 
           const rank = document.createElement("span");
           rank.className = "rank";
           rank.textContent = `${idx + 1}.`;
 
+          const content = document.createElement("div");
+          content.className = "content";
+
           const value = document.createElement("span");
           value.className = "label";
-          value.textContent = label;
+          value.textContent = entry.label;
+
+          const subtitle = document.createElement("span");
+          subtitle.className = "subtitle";
+          subtitle.textContent = entry.subtitle || "";
+
+          content.appendChild(value);
+          if (entry.subtitle) {
+            content.appendChild(subtitle);
+          }
 
           item.appendChild(handle);
           item.appendChild(rank);
-          item.appendChild(value);
+          item.appendChild(content);
 
-          item.addEventListener("dragstart", (event) => {
+          handle.addEventListener("dragstart", (event) => {
             dragIndex = idx;
             item.classList.add("dragging");
             if (event.dataTransfer) {
@@ -181,33 +316,57 @@
             }
           });
 
-          item.addEventListener("dragend", () => {
+          handle.addEventListener("dragend", () => {
             dragIndex = null;
             item.classList.remove("dragging");
-            document.querySelectorAll(".drop-target").forEach((el) => el.classList.remove("drop-target"));
+            clearInsertionLine();
           });
 
           item.addEventListener("dragover", (event) => {
             event.preventDefault();
-            if (idx !== dragIndex) {
-              item.classList.add("drop-target");
-            }
+            const rect = item.getBoundingClientRect();
+            const before = event.clientY < rect.top + rect.height / 2;
+            setInsertionLine(before ? idx : idx + 1);
           });
 
-          item.addEventListener("dragleave", () => {
-            item.classList.remove("drop-target");
-          });
+          item.addEventListener("dragleave", () => {});
 
           item.addEventListener("drop", (event) => {
             event.preventDefault();
-            item.classList.remove("drop-target");
-            reorder(dragIndex, idx);
+            reorder(dragIndex, insertionIndex);
+            clearInsertionLine();
           });
 
           list.appendChild(item);
+
+          const line = document.createElement("div");
+          line.className = "drop-line";
+          line.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            setInsertionLine(idx + 1);
+          });
+          line.addEventListener("drop", (event) => {
+            event.preventDefault();
+            reorder(dragIndex, idx + 1);
+            clearInsertionLine();
+          });
+          dropLineElements.push(line);
+          list.appendChild(line);
+        });
+
+        list.addEventListener("dragover", (event) => {
+          event.preventDefault();
+        });
+        list.addEventListener("drop", (event) => {
+          event.preventDefault();
+          reorder(dragIndex, insertionIndex);
+          clearInsertionLine();
         });
 
         root.appendChild(list);
+        if (insertionIndex != null) {
+          setInsertionLine(insertionIndex);
+        }
         setFrameHeight();
       }
 

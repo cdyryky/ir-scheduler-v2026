@@ -584,16 +584,16 @@ def _dr_resident_request_status(
     }
 
 
-def _dr_rank_drag_order(weeks: list[str], *, key: str) -> list[str]:
-    default_order = [str(week) for week in weeks]
-    returned = _DR_RANK_DND_COMPONENT(items=default_order, key=key, default=default_order)
+def _dnd_order_ids(items: list[dict[str, str]], *, key: str) -> list[str]:
+    default_ids = [str(item.get("id", "")) for item in items if str(item.get("id", ""))]
+    returned = _DR_RANK_DND_COMPONENT(items=items, key=key, default=default_ids)
     if not isinstance(returned, list):
-        return default_order
-    ordered = [str(week) for week in returned]
-    if len(ordered) != len(default_order):
-        return default_order
-    if set(ordered) != set(default_order):
-        return default_order
+        return default_ids
+    ordered = [str(item) for item in returned]
+    if len(ordered) != len(default_ids):
+        return default_ids
+    if set(ordered) != set(default_ids):
+        return default_ids
     return ordered
 
 
@@ -916,7 +916,6 @@ def _render_dr_page(cfg: dict) -> None:
                         valid_weeks=valid_weeks,
                         max_requests=max_requests,
                     )
-                    rank_editor_key = f"dr_req_rank_editor_{_keyify(selected_name)}"
 
                     st.markdown(f"### {selected_name}")
                     header_cols = st.columns([2.0, 1.0, 1.0, 1.0])
@@ -961,7 +960,6 @@ def _render_dr_page(cfg: dict) -> None:
                                     st.session_state["dr_req_limit_msg"] = warning
                                 if changed:
                                     st.session_state.pop("dr_req_limit_msg", None)
-                                    st.session_state.pop(rank_editor_key, None)
                                 st.rerun()
 
                     st.markdown("#### Rank selected weeks")
@@ -975,42 +973,33 @@ def _render_dr_page(cfg: dict) -> None:
                         )
                     )
                     if rank_rows:
-                        week_order = [str(row.get("week", "") or "") for row in rank_rows]
-                        dnd_order = _dr_rank_drag_order(
-                            week_order,
+                        week_order: list[str] = []
+                        seen_weeks: set[str] = set()
+                        for row in rank_rows:
+                            week = str(row.get("week", "") or "").strip()
+                            if not week or week in seen_weeks:
+                                continue
+                            seen_weeks.add(week)
+                            week_order.append(week)
+
+                        dnd_items = [
+                            {
+                                "id": week,
+                                "label": week,
+                                "subtitle": week_dates.get(week, "") or "Dates unavailable",
+                            }
+                            for week in week_order
+                        ]
+                        dnd_order = _dnd_order_ids(
+                            dnd_items,
                             key=f"dr_req_rank_dnd_{_keyify(selected_name)}",
                         )
-                        if dnd_order != week_order:
-                            by_week = {str(row.get("week", "") or ""): dict(row) for row in rank_rows}
-                            reordered: list[dict] = []
-                            for new_rank, week in enumerate(dnd_order, start=1):
-                                item = by_week.get(week, {"week": week, "rank": new_rank})
-                                item["rank"] = new_rank
-                                reordered.append(item)
+                        reordered = [{"week": week, "rank": idx + 1} for idx, week in enumerate(dnd_order)]
+                        if _dr_vacation_signature(reordered) != _dr_vacation_signature(draft_rows):
                             drafts[selected_name] = reordered
-                            st.session_state.pop(rank_editor_key, None)
                             st.rerun()
 
-                        st.caption("Drag to reorder priority. You can also edit rank numbers directly.")
-                        rank_df = pd.DataFrame(rank_rows, columns=["week", "rank"])
-                        edited_rank_df = st.data_editor(
-                            rank_df,
-                            hide_index=True,
-                            num_rows="fixed",
-                            use_container_width=True,
-                            key=rank_editor_key,
-                            column_config={
-                                "week": st.column_config.TextColumn("Week", disabled=True),
-                                "rank": st.column_config.NumberColumn(
-                                    "Rank",
-                                    min_value=1,
-                                    max_value=max_requests,
-                                    step=1,
-                                    help="Use unique contiguous ranks 1..N.",
-                                ),
-                            },
-                        )
-                        drafts[selected_name] = _dr_normalize_vacation_rows(edited_rank_df.to_dict("records"))
+                        st.caption("Drag by handle to set rank priority. Rank 1 is highest priority.")
                     else:
                         st.info("Select one or more weeks from the grid.")
 
@@ -1050,7 +1039,6 @@ def _render_dr_page(cfg: dict) -> None:
                             use_container_width=True,
                         ):
                             drafts[selected_name] = []
-                            st.session_state.pop(rank_editor_key, None)
                             st.session_state.pop("dr_req_limit_msg", None)
                             st.session_state.pop("dr_req_clear_confirm_for", None)
                             st.session_state["dr_req_flash"] = "Draft cleared. Click Save resident requests to persist."
@@ -2670,18 +2658,28 @@ with tabs[4]:
                 priority.append(cid)
         cfg["gui"]["constraints"]["soft_priority"] = priority
 
+        spec_by_id = {spec.id: spec for spec in CONSTRAINT_SPECS}
+        dnd_items = [
+            {
+                "id": cid,
+                "label": _spec_label(spec_by_id[cid]),
+                "subtitle": f"[{cid}]",
+            }
+            for cid in priority
+            if cid in spec_by_id
+        ]
+        st.caption("Drag by handle to reorder Try (soft) constraint priority.")
+        dnd_order = _dnd_order_ids(dnd_items, key="prio_dnd_soft_priority")
+        if dnd_order != priority:
+            priority = list(dnd_order)
+            cfg["gui"]["constraints"]["soft_priority"] = priority
+            st.rerun()
+
         for idx, cid in enumerate(priority):
-            spec = next(spec for spec in CONSTRAINT_SPECS if spec.id == cid)
-            cols = st.columns([6, 1, 1])
-            cols[0].write(f"{idx + 1}. {_spec_label(spec)}")
-            if cols[1].button("Up", key=f"prio_up_{cid}") and idx > 0:
-                priority[idx - 1], priority[idx] = priority[idx], priority[idx - 1]
-                cfg["gui"]["constraints"]["soft_priority"] = priority
-                st.rerun()
-            if cols[2].button("Down", key=f"prio_dn_{cid}") and idx < len(priority) - 1:
-                priority[idx + 1], priority[idx] = priority[idx], priority[idx + 1]
-                cfg["gui"]["constraints"]["soft_priority"] = priority
-                st.rerun()
+            spec = spec_by_id.get(cid)
+            if spec is None:
+                continue
+            st.write(f"{idx + 1}. {_spec_label(spec)}")
 
 if False:  # Checks tab removed
     """
