@@ -2,11 +2,13 @@ from typing import Any, Callable, Optional
 
 import os
 from datetime import date, timedelta
+from pathlib import Path
 import math
 import html
 import re
 
 import streamlit as st
+import streamlit.components.v1 as st_components
 import yaml
 import pandas as pd
 
@@ -42,6 +44,11 @@ from ir_scheduler import (
 
 APP_TITLE_TEXT = "SCHEDULIZER 5000"
 APP_TITLE_DISPLAY_HTML = f"<strong><em>{html.escape(APP_TITLE_TEXT)}</em></strong>"
+
+_DR_RANK_DND_COMPONENT = st_components.declare_component(
+    "dr_rank_dnd",
+    path=str(Path(__file__).resolve().parent / "components" / "dr_rank_dnd"),
+)
 
 
 DISPLAY_COLUMNS = ROTATION_COLUMNS + ["Total Blocks"]
@@ -577,6 +584,19 @@ def _dr_resident_request_status(
     }
 
 
+def _dr_rank_drag_order(weeks: list[str], *, key: str) -> list[str]:
+    default_order = [str(week) for week in weeks]
+    returned = _DR_RANK_DND_COMPONENT(items=default_order, key=key, default=default_order)
+    if not isinstance(returned, list):
+        return default_order
+    ordered = [str(week) for week in returned]
+    if len(ordered) != len(default_order):
+        return default_order
+    if set(ordered) != set(default_order):
+        return default_order
+    return ordered
+
+
 def _dr_parse_vacation_rows(rows: list[dict], valid_weeks: set[str], max_requests: int) -> tuple[list[dict], list[str]]:
     out = _dr_normalize_vacation_rows(rows)
     errors: list[str] = []
@@ -839,35 +859,47 @@ def _render_dr_page(cfg: dict) -> None:
                 if not filtered_rows:
                     st.info("No residents match this search.")
 
+                selected_name_for_nav = str(st.session_state.get(selected_key, "") or "")
+                selected_row_for_nav = next(
+                    (row for row in filtered_rows if str(row.get("Name", "")) == selected_name_for_nav),
+                    None,
+                )
+                selected_year_for_nav = (
+                    str(selected_row_for_nav.get("Year", "")) if isinstance(selected_row_for_nav, dict) else ""
+                )
+
                 for year in DR_YEAR_LABELS:
                     year_rows = [row for row in filtered_rows if str(row.get("Year", "")) == year]
                     if not year_rows:
                         continue
-                    st.markdown(f"**Year {_dr_year_number(year)}**")
-                    for idx, row in enumerate(year_rows):
-                        name = str(row["Name"])
-                        track = str(row["Track"])
-                        status = _dr_resident_request_status(
-                            name,
-                            drafts,
-                            by_resident,
-                            valid_weeks=valid_weeks,
-                            max_requests=max_requests,
-                        )
-                        is_selected = name == st.session_state.get(selected_key)
-                        if st.button(
-                            f"{name} ({track})",
-                            key=f"dr_req_pick_{_keyify(year)}_{_keyify(name)}_{idx}",
-                            type="primary" if is_selected else "secondary",
-                            use_container_width=True,
-                        ):
-                            if not is_selected:
-                                st.session_state[selected_key] = name
-                                st.session_state.pop("dr_req_limit_msg", None)
-                                st.rerun()
-                        persist = "Unsaved" if status["dirty"] else "Saved"
-                        validity = "Error" if not status["valid"] else "Valid"
-                        st.caption(f"{status['selected_count']}/{max_requests} • {persist} • {validity}")
+                    with st.expander(
+                        f"Year {_dr_year_number(year)} ({len(year_rows)})",
+                        expanded=bool(search_text) or year == selected_year_for_nav,
+                    ):
+                        for idx, row in enumerate(year_rows):
+                            name = str(row["Name"])
+                            track = str(row["Track"])
+                            status = _dr_resident_request_status(
+                                name,
+                                drafts,
+                                by_resident,
+                                valid_weeks=valid_weeks,
+                                max_requests=max_requests,
+                            )
+                            is_selected = name == st.session_state.get(selected_key)
+                            if st.button(
+                                f"{name} ({track})",
+                                key=f"dr_req_pick_{_keyify(year)}_{_keyify(name)}_{idx}",
+                                type="primary" if is_selected else "secondary",
+                                use_container_width=True,
+                            ):
+                                if not is_selected:
+                                    st.session_state[selected_key] = name
+                                    st.session_state.pop("dr_req_limit_msg", None)
+                                    st.rerun()
+                            persist = "Unsaved" if status["dirty"] else "Saved"
+                            validity = "Error" if not status["valid"] else "Valid"
+                            st.caption(f"{status['selected_count']}/{max_requests} • {persist} • {validity}")
 
             with main:
                 selected_name = str(st.session_state.get(selected_key, resident_names[0]) or resident_names[0])
@@ -943,6 +975,23 @@ def _render_dr_page(cfg: dict) -> None:
                         )
                     )
                     if rank_rows:
+                        week_order = [str(row.get("week", "") or "") for row in rank_rows]
+                        dnd_order = _dr_rank_drag_order(
+                            week_order,
+                            key=f"dr_req_rank_dnd_{_keyify(selected_name)}",
+                        )
+                        if dnd_order != week_order:
+                            by_week = {str(row.get("week", "") or ""): dict(row) for row in rank_rows}
+                            reordered: list[dict] = []
+                            for new_rank, week in enumerate(dnd_order, start=1):
+                                item = by_week.get(week, {"week": week, "rank": new_rank})
+                                item["rank"] = new_rank
+                                reordered.append(item)
+                            drafts[selected_name] = reordered
+                            st.session_state.pop(rank_editor_key, None)
+                            st.rerun()
+
+                        st.caption("Drag to reorder priority. You can also edit rank numbers directly.")
                         rank_df = pd.DataFrame(rank_rows, columns=["week", "rank"])
                         edited_rank_df = st.data_editor(
                             rank_df,

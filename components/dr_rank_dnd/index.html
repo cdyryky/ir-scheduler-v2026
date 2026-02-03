@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --border: #d9d9d9;
+        --border-hover: #9ca3af;
+        --text: #111827;
+        --muted: #6b7280;
+        --drag-bg: #eff6ff;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+        color: var(--text);
+        background: transparent;
+      }
+
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg);
+        padding: 0.45rem 0.6rem;
+        cursor: grab;
+        user-select: none;
+      }
+
+      .item:hover {
+        border-color: var(--border-hover);
+      }
+
+      .item.dragging {
+        opacity: 0.6;
+      }
+
+      .item.drop-target {
+        border-color: #2563eb;
+        background: var(--drag-bg);
+      }
+
+      .handle {
+        color: var(--muted);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .rank {
+        min-width: 1.4rem;
+        text-align: right;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .label {
+        font-size: 0.9rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .empty {
+        font-size: 0.85rem;
+        color: var(--muted);
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      const BACK_MSG = {
+        COMPONENT_READY: "streamlit:componentReady",
+        SET_COMPONENT_VALUE: "streamlit:setComponentValue",
+        SET_FRAME_HEIGHT: "streamlit:setFrameHeight",
+      };
+      const FRONT_MSG = {
+        RENDER: "streamlit:render",
+      };
+      const API_VERSION = 1;
+
+      let items = [];
+      let dragIndex = null;
+
+      const root = document.getElementById("root");
+
+      function sendMessage(type, data = {}) {
+        window.parent.postMessage(
+          {
+            isStreamlitMessage: true,
+            type,
+            ...data,
+          },
+          "*"
+        );
+      }
+
+      function setFrameHeight() {
+        const height = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+        sendMessage(BACK_MSG.SET_FRAME_HEIGHT, { height });
+      }
+
+      function setComponentValue(value) {
+        sendMessage(BACK_MSG.SET_COMPONENT_VALUE, { value });
+      }
+
+      function normalizeItems(raw) {
+        if (!Array.isArray(raw)) {
+          return [];
+        }
+        return raw.map((item) => String(item || ""));
+      }
+
+      function reorder(fromIndex, toIndex) {
+        if (fromIndex === toIndex || fromIndex == null || toIndex == null) {
+          return;
+        }
+        const next = [...items];
+        const moved = next.splice(fromIndex, 1)[0];
+        next.splice(toIndex, 0, moved);
+        items = next;
+        render();
+        setComponentValue(items);
+      }
+
+      function render() {
+        root.innerHTML = "";
+        const list = document.createElement("div");
+        list.className = "list";
+
+        if (items.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No selected weeks";
+          list.appendChild(empty);
+          root.appendChild(list);
+          setFrameHeight();
+          return;
+        }
+
+        items.forEach((label, idx) => {
+          const item = document.createElement("div");
+          item.className = "item";
+          item.setAttribute("draggable", "true");
+
+          const handle = document.createElement("span");
+          handle.className = "handle";
+          handle.textContent = "\u2630";
+
+          const rank = document.createElement("span");
+          rank.className = "rank";
+          rank.textContent = `${idx + 1}.`;
+
+          const value = document.createElement("span");
+          value.className = "label";
+          value.textContent = label;
+
+          item.appendChild(handle);
+          item.appendChild(rank);
+          item.appendChild(value);
+
+          item.addEventListener("dragstart", (event) => {
+            dragIndex = idx;
+            item.classList.add("dragging");
+            if (event.dataTransfer) {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", String(idx));
+            }
+          });
+
+          item.addEventListener("dragend", () => {
+            dragIndex = null;
+            item.classList.remove("dragging");
+            document.querySelectorAll(".drop-target").forEach((el) => el.classList.remove("drop-target"));
+          });
+
+          item.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            if (idx !== dragIndex) {
+              item.classList.add("drop-target");
+            }
+          });
+
+          item.addEventListener("dragleave", () => {
+            item.classList.remove("drop-target");
+          });
+
+          item.addEventListener("drop", (event) => {
+            event.preventDefault();
+            item.classList.remove("drop-target");
+            reorder(dragIndex, idx);
+          });
+
+          list.appendChild(item);
+        });
+
+        root.appendChild(list);
+        setFrameHeight();
+      }
+
+      window.addEventListener("message", (event) => {
+        const message = event.data;
+        if (!message || message.type !== FRONT_MSG.RENDER) {
+          return;
+        }
+        const args = message.args || {};
+        items = normalizeItems(args.items);
+        render();
+      });
+
+      sendMessage(BACK_MSG.COMPONENT_READY, { apiVersion: API_VERSION });
+      setFrameHeight();
+    </script>
+  </body>
+</html>
