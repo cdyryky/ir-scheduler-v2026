@@ -444,18 +444,149 @@ def _dr_week_labels(block_labels: list[str]) -> list[str]:
     return out
 
 
-def _dr_parse_vacation_rows(rows: list[dict], valid_weeks: set[str], max_requests: int) -> tuple[list[dict], list[str]]:
+def _dr_week_date_labels(cfg: dict, block_labels: list[str]) -> dict[str, str]:
+    ranges = _block_date_ranges(cfg, block_labels)
+    out: dict[str, str] = {}
+    for block in block_labels:
+        block_range = ranges.get(str(block))
+        for week_idx in range(4):
+            week = f"{block}.{week_idx}"
+            if not block_range:
+                out[week] = ""
+                continue
+            week_start = block_range[0] + timedelta(days=7 * week_idx)
+            week_end = week_start + timedelta(days=6)
+            out[week] = f"{_format_mmddyy(week_start)} - {_format_mmddyy(week_end)}"
+    return out
+
+
+def _dr_normalize_vacation_rows(rows: Any) -> list[dict]:
     out: list[dict] = []
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        week = str(row.get("week", "") or "").strip()
+        if not week:
+            continue
+        rank_raw = row.get("rank", None)
+        rank: Optional[int]
+        if _is_na(rank_raw):
+            rank = None
+        else:
+            try:
+                rank = int(float(rank_raw))
+            except Exception:
+                rank = None
+        out.append({"week": week, "rank": rank})
+    return out
+
+
+def _dr_vacation_signature(rows: Any) -> tuple[tuple[str, Optional[int]], ...]:
+    normalized = _dr_normalize_vacation_rows(rows)
+    items = [(str(r.get("week", "")), r.get("rank")) for r in normalized]
+    items.sort(key=lambda item: (item[0], item[1] if item[1] is not None else 9999))
+    return tuple(items)
+
+
+def _dr_init_request_drafts(by_resident: dict, resident_names: list[str]) -> dict[str, list[dict]]:
+    drafts = st.session_state.setdefault("dr_req_drafts", {})
+    saved_sigs = st.session_state.setdefault("dr_req_saved_sig", {})
+    valid_names = set(resident_names)
+
+    for name in list(drafts.keys()):
+        if name not in valid_names:
+            del drafts[name]
+    for name in list(saved_sigs.keys()):
+        if name not in valid_names:
+            del saved_sigs[name]
+
+    for name in resident_names:
+        saved_rows = _dr_normalize_vacation_rows(by_resident.get(name, []))
+        saved_sig = _dr_vacation_signature(saved_rows)
+        if name not in drafts:
+            drafts[name] = list(saved_rows)
+            saved_sigs[name] = saved_sig
+            continue
+
+        draft_rows = _dr_normalize_vacation_rows(drafts.get(name, []))
+        baseline_sig = saved_sigs.get(name, saved_sig)
+        draft_dirty = _dr_vacation_signature(draft_rows) != baseline_sig
+
+        # If saved config changed externally and this resident has no unsaved draft edits, resync draft.
+        if baseline_sig != saved_sig and not draft_dirty:
+            drafts[name] = list(saved_rows)
+        else:
+            drafts[name] = draft_rows
+        saved_sigs[name] = saved_sig
+
+    return drafts
+
+
+def _dr_next_available_rank(rows: list[dict], max_requests: int) -> Optional[int]:
+    used: set[int] = set()
+    for row in rows:
+        rank = row.get("rank")
+        if isinstance(rank, int) and 1 <= rank <= max_requests:
+            used.add(rank)
+    for rank in range(1, max_requests + 1):
+        if rank not in used:
+            return rank
+    return None
+
+
+def _dr_toggle_draft_week(
+    drafts: dict[str, list[dict]],
+    resident_name: str,
+    week: str,
+    max_requests: int,
+) -> tuple[bool, Optional[str]]:
+    rows = _dr_normalize_vacation_rows(drafts.get(resident_name, []))
+    selected_weeks = {str(r.get("week", "")) for r in rows}
+    if week in selected_weeks:
+        drafts[resident_name] = [r for r in rows if str(r.get("week", "")) != week]
+        return True, None
+
+    if len(selected_weeks) >= max_requests:
+        return False, f"Maximum reached ({max_requests}). Deselect a week before adding another."
+
+    next_rank = _dr_next_available_rank(rows, max_requests)
+    rows.append({"week": week, "rank": next_rank})
+    drafts[resident_name] = rows
+    return True, None
+
+
+def _dr_resident_request_status(
+    resident_name: str,
+    drafts: dict[str, list[dict]],
+    by_resident: dict,
+    valid_weeks: set[str],
+    max_requests: int,
+) -> dict:
+    draft_rows = _dr_normalize_vacation_rows(drafts.get(resident_name, []))
+    saved_rows = _dr_normalize_vacation_rows(by_resident.get(resident_name, []))
+    _, errors = _dr_parse_vacation_rows(draft_rows, valid_weeks, max_requests=max_requests)
+    selected_count = len({str(r.get("week", "")) for r in draft_rows if str(r.get("week", ""))})
+    dirty = _dr_vacation_signature(draft_rows) != _dr_vacation_signature(saved_rows)
+    return {
+        "dirty": dirty,
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "selected_count": selected_count,
+    }
+
+
+def _dr_parse_vacation_rows(rows: list[dict], valid_weeks: set[str], max_requests: int) -> tuple[list[dict], list[str]]:
+    out = _dr_normalize_vacation_rows(rows)
     errors: list[str] = []
     seen_weeks: set[str] = set()
     seen_ranks: set[int] = set()
 
-    for idx, row in enumerate(rows, start=1):
-        week_raw = row.get("week", "")
-        week = "" if _is_na(week_raw) else str(week_raw or "").strip()
+    parsed: list[dict] = []
+    for idx, row in enumerate(out, start=1):
+        week = str(row.get("week", "") or "").strip()
         rank_raw = row.get("rank", None)
-        if _is_na(rank_raw):
-            rank_raw = None
         if not week:
             continue
         if week not in valid_weeks:
@@ -477,13 +608,18 @@ def _dr_parse_vacation_rows(rows: list[dict], valid_weeks: set[str], max_request
             continue
         seen_weeks.add(week)
         seen_ranks.add(rank)
-        out.append({"week": week, "rank": rank})
+        parsed.append({"week": week, "rank": rank})
 
-    out.sort(key=lambda item: item["rank"])
-    if len(out) > max_requests:
+    parsed.sort(key=lambda item: item["rank"])
+    if len(parsed) > max_requests:
         errors.append(f"At most {max_requests} requested weeks are allowed.")
-        out = out[:max_requests]
-    return out, errors
+    if parsed:
+        expected = set(range(1, len(parsed) + 1))
+        missing = sorted(expected - seen_ranks)
+        if missing:
+            joined = ", ".join(str(v) for v in missing)
+            errors.append(f"Ranks must be contiguous from 1..{len(parsed)}. Missing: {joined}.")
+    return parsed, errors
 
 
 def _render_dr_page(cfg: dict) -> None:
@@ -510,57 +646,79 @@ def _render_dr_page(cfg: dict) -> None:
         year_counts = residents.setdefault("year_counts", dict(DEFAULT_DR_YEAR_COUNTS))
         years = residents.setdefault("years", {year: [] for year in DR_YEAR_LABELS})
 
+        count_inputs: dict[str, int] = {}
         cols = st.columns(4)
         for idx, year in enumerate(DR_YEAR_LABELS):
             year_num = _dr_year_number(year)
             default_value = int(year_counts.get(year, DEFAULT_DR_YEAR_COUNTS[year]))
-            count = int(
+            input_key = f"dr_year_count_input_{year}"
+            if input_key not in st.session_state:
+                st.session_state[input_key] = default_value
+            count_inputs[year] = int(
                 cols[idx].number_input(
                     f"Year {year_num} count",
                     min_value=0,
                     max_value=100,
-                    value=default_value,
                     step=1,
-                    key=f"dr_year_count_{year}",
+                    key=input_key,
                 )
             )
 
-            prev_count_key = f"dr_prev_year_count_{year}"
-            prev_count = st.session_state.get(prev_count_key)
-            if prev_count is not None and int(prev_count) != count:
+        counts_pending = any(
+            int(count_inputs.get(year, 0)) != int(year_counts.get(year, DEFAULT_DR_YEAR_COUNTS[year]))
+            for year in DR_YEAR_LABELS
+        )
+        if counts_pending:
+            st.caption("Count changes are pending. Click Apply year counts to update resident entry rows.")
+        else:
+            st.caption("Apply counts first to update resident entry rows.")
+        apply_counts = st.button("Apply year counts", type="primary", key="dr_apply_year_counts", use_container_width=True)
+
+        if apply_counts:
+            for year in DR_YEAR_LABELS:
+                target_count = int(count_inputs.get(year, year_counts.get(year, 0)))
+                year_counts[year] = target_count
+                years[year] = _dr_resize_year_rows(year, years.get(year), target_count)
                 st.session_state.pop(f"dr_residents_editor_{year}", None)
-            st.session_state[prev_count_key] = count
+            st.success("Updated year counts.")
 
-            year_counts[year] = count
-            years[year] = _dr_resize_year_rows(year, years.get(year), count)
+        row_inputs: dict[str, list[dict]] = {}
+        with st.form("dr_resident_rows_form", clear_on_submit=False):
+            for year in DR_YEAR_LABELS:
+                year_num = _dr_year_number(year)
+                st.markdown(f"#### Year {year_num}")
+                target_count = int(year_counts.get(year, DEFAULT_DR_YEAR_COUNTS[year]))
+                rows = _dr_resize_year_rows(year, years.get(year), target_count)
+                df = pd.DataFrame(rows, columns=["name", "track"])
+                edited_df = st.data_editor(
+                    df,
+                    hide_index=True,
+                    num_rows="fixed",
+                    use_container_width=True,
+                    key=f"dr_residents_editor_{year}",
+                    column_config={
+                        "name": st.column_config.TextColumn("Name"),
+                        "track": st.column_config.SelectboxColumn("Track", options=DR_RESIDENT_TRACKS),
+                    },
+                )
+                row_inputs[year] = edited_df.to_dict("records")
+            st.caption("Apply names/tracks after editing resident rows.")
+            apply_rows = st.form_submit_button("Apply resident names and tracks", use_container_width=True)
 
-        for year in DR_YEAR_LABELS:
-            year_num = _dr_year_number(year)
-            st.markdown(f"#### Year {year_num}")
-            rows = years.get(year, [])
-            df = pd.DataFrame(rows, columns=["name", "track"])
-            edited_df = st.data_editor(
-                df,
-                hide_index=True,
-                num_rows="fixed",
-                use_container_width=True,
-                key=f"dr_residents_editor_{year}",
-                column_config={
-                    "name": st.column_config.TextColumn("Name"),
-                    "track": st.column_config.SelectboxColumn("Track", options=DR_RESIDENT_TRACKS),
-                },
-            )
-
-            normalized_rows: list[dict] = []
-            for idx, row in enumerate(edited_df.to_dict("records"), start=1):
-                name = str(row.get("name", "") or "").strip()
-                track = str(row.get("track", "DR") or "DR").strip().upper()
-                if track not in DR_RESIDENT_TRACKS:
-                    track = "DR"
-                if not name:
-                    name = f"{year}-{idx}"
-                normalized_rows.append({"name": name, "track": track})
-            years[year] = normalized_rows
+        if apply_rows:
+            for year in DR_YEAR_LABELS:
+                target_count = int(year_counts.get(year, DEFAULT_DR_YEAR_COUNTS[year]))
+                normalized_rows: list[dict] = []
+                for idx, row in enumerate(row_inputs.get(year, []), start=1):
+                    name = str(row.get("name", "") or "").strip()
+                    track = str(row.get("track", "DR") or "DR").strip().upper()
+                    if track not in DR_RESIDENT_TRACKS:
+                        track = "DR"
+                    if not name:
+                        name = f"{year}-{idx}"
+                    normalized_rows.append({"name": name, "track": track})
+                years[year] = _dr_resize_year_rows(year, normalized_rows, target_count)
+            st.success("Updated resident names and tracks.")
 
         resident_error = validate_dr_resident_names(cfg)
         if resident_error:
@@ -575,7 +733,7 @@ def _render_dr_page(cfg: dict) -> None:
 
     with tabs[2]:
         st.subheader("Requests")
-        st.caption("Vacation requests only in this phase. Other request types are coming later.")
+        st.caption("Select vacation weeks, assign manual ranks, then save per resident.")
 
         gui = cfg.setdefault("gui", {})
         requests = gui.setdefault("requests", {})
@@ -585,23 +743,54 @@ def _render_dr_page(cfg: dict) -> None:
             by_resident = {}
             vacation["by_resident"] = by_resident
 
-        max_requests_default = int(vacation.get("max_requests_per_resident", DEFAULT_DR_MAX_VACATION_REQUESTS))
-        max_requests = int(
-            st.number_input(
-                "Max requested weeks per resident",
-                min_value=1,
-                max_value=52,
-                value=max_requests_default,
-                step=1,
-                key="dr_vacation_max_requests",
-            )
-        )
-        vacation["max_requests_per_resident"] = max_requests
         vacation["awards_per_resident"] = DEFAULT_DR_AWARDS_PER_RESIDENT
-        st.caption(
-            f"Each resident can request up to {max_requests} week(s). "
-            f"Top {DEFAULT_DR_AWARDS_PER_RESIDENT} ranked weeks are the current preview awards."
-        )
+        max_requests_default = int(vacation.get("max_requests_per_resident", DEFAULT_DR_MAX_VACATION_REQUESTS))
+
+        flash = str(st.session_state.pop("dr_req_flash", "") or "").strip()
+        if flash:
+            st.success(flash)
+
+        with st.expander("Advanced request settings", expanded=False):
+            max_input_key = "dr_req_max_requests_input"
+            if max_input_key not in st.session_state:
+                st.session_state[max_input_key] = max_requests_default
+
+            max_requests_candidate = int(
+                st.number_input(
+                    "Max requested weeks per resident",
+                    min_value=1,
+                    max_value=52,
+                    step=1,
+                    key=max_input_key,
+                )
+            )
+            st.caption("This cap controls week selection limit and validation checks.")
+            apply_settings = st.button(
+                "Apply request settings",
+                type="primary",
+                key="dr_req_apply_settings",
+                use_container_width=True,
+            )
+
+        if apply_settings:
+            prior_max = max_requests_default
+            vacation["max_requests_per_resident"] = max_requests_candidate
+            max_requests_default = max_requests_candidate
+            over_saved = [
+                name
+                for name, entries in by_resident.items()
+                if len(_dr_normalize_vacation_rows(entries)) > max_requests_default
+            ]
+            st.success(f"Updated max requested weeks per resident to {max_requests_default}.")
+            if max_requests_default < prior_max and over_saved:
+                shown = ", ".join(over_saved[:8])
+                suffix = "" if len(over_saved) <= 8 else f", +{len(over_saved) - 8} more"
+                st.warning(
+                    f"Saved requests exceed the new max for: {shown}{suffix}. "
+                    "These residents must be trimmed and saved manually."
+                )
+
+        max_requests = int(vacation.get("max_requests_per_resident", DEFAULT_DR_MAX_VACATION_REQUESTS))
 
         resident_rows = _dr_resident_rows(cfg)
         resident_names = [r["Name"] for r in resident_rows]
@@ -613,84 +802,234 @@ def _render_dr_page(cfg: dict) -> None:
         if not resident_names:
             st.info("Add DR residents before entering requests.")
         else:
-            selected_key = "dr_vacation_selected_resident"
+            block_labels = _block_labels(cfg)
+            block_ranges = _block_date_ranges(cfg, block_labels)
+            week_labels = _dr_week_labels(block_labels)
+            valid_weeks = set(week_labels)
+            week_dates = _dr_week_date_labels(cfg, block_labels)
+            drafts = _dr_init_request_drafts(by_resident, resident_names)
+
+            selected_key = "dr_req_selected_resident"
             if st.session_state.get(selected_key) not in resident_names:
                 st.session_state[selected_key] = resident_names[0]
 
-            selected_name = st.selectbox(
-                "Resident",
-                options=resident_names,
-                key=selected_key,
-            )
+            left, main = st.columns([1.4, 3.6], gap="large")
 
-            block_labels = _block_labels(cfg)
-            week_labels = _dr_week_labels(block_labels)
-            week_options = [""] + week_labels
-            valid_weeks = set(week_labels)
+            with left:
+                search_text = str(
+                    st.text_input(
+                        "Search residents",
+                        key="dr_req_search",
+                        placeholder="Search by name or track",
+                    )
+                    or ""
+                ).strip().casefold()
 
-            current_entries = by_resident.get(selected_name, [])
-            if not isinstance(current_entries, list):
-                current_entries = []
+                filtered_rows: list[dict] = []
+                for row in resident_rows:
+                    name = str(row.get("Name", "") or "")
+                    track = str(row.get("Track", "") or "")
+                    if not search_text or search_text in name.casefold() or search_text in track.casefold():
+                        filtered_rows.append(row)
 
-            rows = [{"week": "", "rank": None} for _ in range(max_requests)]
-            for idx, entry in enumerate(current_entries[:max_requests]):
-                if not isinstance(entry, dict):
-                    continue
-                rows[idx] = {
-                    "week": str(entry.get("week", "") or "").strip(),
-                    "rank": entry.get("rank", None),
-                }
+                filtered_names = [str(row["Name"]) for row in filtered_rows]
+                if filtered_rows and st.session_state.get(selected_key) not in filtered_names:
+                    st.session_state[selected_key] = filtered_names[0]
 
-            editor_key = f"dr_vacation_editor_{_keyify(selected_name)}"
-            max_state_key = f"dr_prev_vacation_max_{_keyify(selected_name)}"
-            prev_max = st.session_state.get(max_state_key)
-            if prev_max is not None and int(prev_max) != max_requests:
-                st.session_state.pop(editor_key, None)
-            st.session_state[max_state_key] = max_requests
+                if not filtered_rows:
+                    st.info("No residents match this search.")
 
-            edited_df = st.data_editor(
-                pd.DataFrame(rows, columns=["week", "rank"]),
-                hide_index=True,
-                num_rows="fixed",
-                use_container_width=True,
-                key=editor_key,
-                column_config={
-                    "week": st.column_config.SelectboxColumn("Week", options=week_options),
-                    "rank": st.column_config.NumberColumn(
-                        "Rank",
-                        min_value=1,
-                        max_value=max_requests,
-                        step=1,
-                        help="Use unique ranks 1..N.",
-                    ),
-                },
-            )
+                for year in DR_YEAR_LABELS:
+                    year_rows = [row for row in filtered_rows if str(row.get("Year", "")) == year]
+                    if not year_rows:
+                        continue
+                    st.markdown(f"**Year {_dr_year_number(year)}**")
+                    for idx, row in enumerate(year_rows):
+                        name = str(row["Name"])
+                        track = str(row["Track"])
+                        status = _dr_resident_request_status(
+                            name,
+                            drafts,
+                            by_resident,
+                            valid_weeks=valid_weeks,
+                            max_requests=max_requests,
+                        )
+                        is_selected = name == st.session_state.get(selected_key)
+                        if st.button(
+                            f"{name} ({track})",
+                            key=f"dr_req_pick_{_keyify(year)}_{_keyify(name)}_{idx}",
+                            type="primary" if is_selected else "secondary",
+                            use_container_width=True,
+                        ):
+                            if not is_selected:
+                                st.session_state[selected_key] = name
+                                st.session_state.pop("dr_req_limit_msg", None)
+                                st.rerun()
+                        persist = "Unsaved" if status["dirty"] else "Saved"
+                        validity = "Error" if not status["valid"] else "Valid"
+                        st.caption(f"{status['selected_count']}/{max_requests} • {persist} • {validity}")
 
-            parsed_rows, row_errors = _dr_parse_vacation_rows(
-                edited_df.to_dict("records"),
-                valid_weeks,
-                max_requests=max_requests,
-            )
-            if row_errors:
-                st.error("Please fix vacation request issues before saving this resident.")
-                st.markdown("\n".join(f"- {err}" for err in row_errors))
-            else:
-                if parsed_rows:
-                    by_resident[selected_name] = parsed_rows
-                elif selected_name in by_resident:
-                    del by_resident[selected_name]
+            with main:
+                selected_name = str(st.session_state.get(selected_key, resident_names[0]) or resident_names[0])
+                selected = next((row for row in resident_rows if str(row.get("Name", "")) == selected_name), None)
+                if not selected:
+                    st.info("Select a resident to edit requests.")
+                elif not block_labels:
+                    st.error("No blocks configured.")
+                else:
+                    selected_status = _dr_resident_request_status(
+                        selected_name,
+                        drafts,
+                        by_resident,
+                        valid_weeks=valid_weeks,
+                        max_requests=max_requests,
+                    )
+                    rank_editor_key = f"dr_req_rank_editor_{_keyify(selected_name)}"
 
-            saved_rows = by_resident.get(selected_name, [])
-            awarded = [entry["week"] for entry in saved_rows[:DEFAULT_DR_AWARDS_PER_RESIDENT] if isinstance(entry, dict)]
-            awarded_text = ", ".join(awarded) if awarded else "None yet"
-            st.markdown(f"**Award preview ({DEFAULT_DR_AWARDS_PER_RESIDENT} weeks):** {awarded_text}")
+                    st.markdown(f"### {selected_name}")
+                    header_cols = st.columns([2.0, 1.0, 1.0, 1.0])
+                    header_cols[0].caption(f"Year {_dr_year_number(str(selected['Year']))} • Track {selected['Track']}")
+                    header_cols[1].caption("Unsaved" if selected_status["dirty"] else "Saved")
+                    header_cols[2].caption("Error" if not selected_status["valid"] else "Valid")
+                    header_cols[3].caption(f"{selected_status['selected_count']}/{max_requests} selected")
 
-            if saved_rows:
-                st.dataframe(
-                    pd.DataFrame(saved_rows, columns=["week", "rank"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                    st.markdown("#### Week selection")
+                    header = st.columns([1.2, 1.0, 1.0, 1.0, 1.0], gap="small")
+                    header[0].markdown("**Block**")
+                    for week_idx in range(4):
+                        header[week_idx + 1].markdown(f"**Week {week_idx}**")
+
+                    draft_rows = _dr_normalize_vacation_rows(drafts.get(selected_name, []))
+                    selected_weeks = {str(r.get("week", "")) for r in draft_rows if str(r.get("week", ""))}
+
+                    if len(selected_weeks) >= max_requests:
+                        st.info(f"Selection cap reached ({max_requests}). Deselect a week to add another.")
+                    limit_msg = str(st.session_state.get("dr_req_limit_msg", "") or "").strip()
+                    if limit_msg:
+                        st.warning(limit_msg)
+
+                    for block in block_labels:
+                        cols = st.columns([1.2, 1.0, 1.0, 1.0, 1.0], gap="small")
+                        _render_block_label_cell(cols[0], str(block), block_ranges.get(str(block)))
+                        for week_idx in range(4):
+                            week = f"{block}.{week_idx}"
+                            is_selected = week in selected_weeks
+                            is_disabled = (not is_selected) and (len(selected_weeks) >= max_requests)
+                            date_label = week_dates.get(week, "") or "Dates unavailable"
+                            button_label = f"{week}\n{date_label}"
+                            if cols[week_idx + 1].button(
+                                button_label,
+                                key=f"dr_req_toggle_{_keyify(selected_name)}_{_keyify(week)}",
+                                type="primary" if is_selected else "secondary",
+                                use_container_width=True,
+                                disabled=is_disabled,
+                            ):
+                                changed, warning = _dr_toggle_draft_week(drafts, selected_name, week, max_requests)
+                                if warning:
+                                    st.session_state["dr_req_limit_msg"] = warning
+                                if changed:
+                                    st.session_state.pop("dr_req_limit_msg", None)
+                                    st.session_state.pop(rank_editor_key, None)
+                                st.rerun()
+
+                    st.markdown("#### Rank selected weeks")
+                    draft_rows = _dr_normalize_vacation_rows(drafts.get(selected_name, []))
+                    rank_rows = list(draft_rows)
+                    rank_rows.sort(
+                        key=lambda row: (
+                            row.get("rank") is None,
+                            row.get("rank") if isinstance(row.get("rank"), int) else 9999,
+                            str(row.get("week", "")),
+                        )
+                    )
+                    if rank_rows:
+                        rank_df = pd.DataFrame(rank_rows, columns=["week", "rank"])
+                        edited_rank_df = st.data_editor(
+                            rank_df,
+                            hide_index=True,
+                            num_rows="fixed",
+                            use_container_width=True,
+                            key=rank_editor_key,
+                            column_config={
+                                "week": st.column_config.TextColumn("Week", disabled=True),
+                                "rank": st.column_config.NumberColumn(
+                                    "Rank",
+                                    min_value=1,
+                                    max_value=max_requests,
+                                    step=1,
+                                    help="Use unique contiguous ranks 1..N.",
+                                ),
+                            },
+                        )
+                        drafts[selected_name] = _dr_normalize_vacation_rows(edited_rank_df.to_dict("records"))
+                    else:
+                        st.info("Select one or more weeks from the grid.")
+
+                    parsed_rows, row_errors = _dr_parse_vacation_rows(
+                        drafts.get(selected_name, []),
+                        valid_weeks=valid_weeks,
+                        max_requests=max_requests,
+                    )
+                    if row_errors:
+                        st.error("Please fix request issues before saving.")
+                        st.markdown("\n".join(f"- {err}" for err in row_errors))
+
+                    action_cols = st.columns([1.1, 1.1, 2.3], gap="small")
+                    save_clicked = action_cols[0].button(
+                        "Save resident requests",
+                        key=f"dr_req_save_{_keyify(selected_name)}",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=bool(row_errors),
+                    )
+                    clear_clicked = action_cols[1].button(
+                        "Clear resident requests",
+                        key=f"dr_req_clear_{_keyify(selected_name)}",
+                        use_container_width=True,
+                    )
+
+                    if clear_clicked:
+                        st.session_state["dr_req_clear_confirm_for"] = selected_name
+
+                    if st.session_state.get("dr_req_clear_confirm_for") == selected_name:
+                        st.warning("Confirm clearing this resident's draft requests.")
+                        confirm_cols = st.columns([1.0, 1.0, 2.5], gap="small")
+                        if confirm_cols[0].button(
+                            "Confirm clear",
+                            key=f"dr_req_confirm_clear_{_keyify(selected_name)}",
+                            type="primary",
+                            use_container_width=True,
+                        ):
+                            drafts[selected_name] = []
+                            st.session_state.pop(rank_editor_key, None)
+                            st.session_state.pop("dr_req_limit_msg", None)
+                            st.session_state.pop("dr_req_clear_confirm_for", None)
+                            st.session_state["dr_req_flash"] = "Draft cleared. Click Save resident requests to persist."
+                            st.rerun()
+                        if confirm_cols[1].button(
+                            "Cancel",
+                            key=f"dr_req_cancel_clear_{_keyify(selected_name)}",
+                            use_container_width=True,
+                        ):
+                            st.session_state.pop("dr_req_clear_confirm_for", None)
+                            st.rerun()
+
+                    if save_clicked:
+                        if parsed_rows:
+                            by_resident[selected_name] = parsed_rows
+                        elif selected_name in by_resident:
+                            del by_resident[selected_name]
+                        drafts[selected_name] = list(parsed_rows)
+                        st.session_state.setdefault("dr_req_saved_sig", {})[selected_name] = _dr_vacation_signature(parsed_rows)
+                        st.session_state.pop("dr_req_limit_msg", None)
+                        st.session_state.pop("dr_req_clear_confirm_for", None)
+                        st.session_state["dr_req_flash"] = "Saved resident requests."
+                        st.rerun()
+
+                    saved_rows = _dr_normalize_vacation_rows(by_resident.get(selected_name, []))
+                    awarded = [entry["week"] for entry in saved_rows[:DEFAULT_DR_AWARDS_PER_RESIDENT]]
+                    awarded_text = ", ".join(awarded) if awarded else "None yet"
+                    st.caption(f"Award preview ({DEFAULT_DR_AWARDS_PER_RESIDENT} weeks): {awarded_text}")
 
     with tabs[3]:
         st.subheader("Constraints")
@@ -770,6 +1109,7 @@ def _render_dr_page(cfg: dict) -> None:
                 "dr_year_",
                 "dr_residents_editor_",
                 "dr_vacation_",
+                "dr_req_",
                 "dr_calendar_",
                 "dr_config_",
             )
