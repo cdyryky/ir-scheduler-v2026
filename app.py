@@ -524,6 +524,13 @@ def _render_dr_page(cfg: dict) -> None:
                     key=f"dr_year_count_{year}",
                 )
             )
+
+            prev_count_key = f"dr_prev_year_count_{year}"
+            prev_count = st.session_state.get(prev_count_key)
+            if prev_count is not None and int(prev_count) != count:
+                st.session_state.pop(f"dr_residents_editor_{year}", None)
+            st.session_state[prev_count_key] = count
+
             year_counts[year] = count
             years[year] = _dr_resize_year_rows(year, years.get(year), count)
 
@@ -537,7 +544,7 @@ def _render_dr_page(cfg: dict) -> None:
                 hide_index=True,
                 num_rows="fixed",
                 use_container_width=True,
-                key=f"dr_residents_editor_{year}_{len(rows)}",
+                key=f"dr_residents_editor_{year}",
                 column_config={
                     "name": st.column_config.TextColumn("Name"),
                     "track": st.column_config.SelectboxColumn("Track", options=DR_RESIDENT_TRACKS),
@@ -606,10 +613,14 @@ def _render_dr_page(cfg: dict) -> None:
         if not resident_names:
             st.info("Add DR residents before entering requests.")
         else:
+            selected_key = "dr_vacation_selected_resident"
+            if st.session_state.get(selected_key) not in resident_names:
+                st.session_state[selected_key] = resident_names[0]
+
             selected_name = st.selectbox(
                 "Resident",
                 options=resident_names,
-                key="dr_vacation_selected_resident",
+                key=selected_key,
             )
 
             block_labels = _block_labels(cfg)
@@ -630,12 +641,19 @@ def _render_dr_page(cfg: dict) -> None:
                     "rank": entry.get("rank", None),
                 }
 
+            editor_key = f"dr_vacation_editor_{_keyify(selected_name)}"
+            max_state_key = f"dr_prev_vacation_max_{_keyify(selected_name)}"
+            prev_max = st.session_state.get(max_state_key)
+            if prev_max is not None and int(prev_max) != max_requests:
+                st.session_state.pop(editor_key, None)
+            st.session_state[max_state_key] = max_requests
+
             edited_df = st.data_editor(
                 pd.DataFrame(rows, columns=["week", "rank"]),
                 hide_index=True,
                 num_rows="fixed",
                 use_container_width=True,
-                key=f"dr_vacation_editor_{_keyify(selected_name)}_{max_requests}",
+                key=editor_key,
                 column_config={
                     "week": st.column_config.SelectboxColumn("Week", options=week_options),
                     "rank": st.column_config.NumberColumn(
