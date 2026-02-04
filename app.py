@@ -1258,42 +1258,28 @@ st.markdown(
     }
 
     /* Modern header */
-    .hero {
-        position: relative;
+    section.main div.block-container > div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"]:first-of-type {
         border-radius: 16px;
-        padding: 0.55rem 1.0rem;
         margin: 0 0 0.45rem 0;
         background:
           radial-gradient(900px 260px at 10% 0%, rgba(59, 130, 246, 0.16), rgba(0,0,0,0) 60%),
           radial-gradient(900px 260px at 90% 10%, rgba(168, 85, 247, 0.14), rgba(0,0,0,0) 60%),
           var(--secondary-background-color);
         border: 1px solid rgba(0,0,0,0.08);
-        box-shadow:
-          0 18px 40px rgba(0,0,0,0.10);
+        box-shadow: 0 18px 40px rgba(0,0,0,0.10);
         overflow: hidden;
     }
+    section.main div.block-container > div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"]:first-of-type > div {
+        padding: 0.42rem 0.55rem 0.35rem 0.55rem;
+    }
     @media (prefers-color-scheme: dark) {
-        .hero { border-color: rgba(255,255,255,0.10); }
-    }
-    .hero:before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0));
-        opacity: 0.35;
-        pointer-events: none;
-    }
-    .hero-row {
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-        flex-wrap: wrap;
+        section.main div.block-container > div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"]:first-of-type {
+            border-color: rgba(255,255,255,0.10);
+        }
     }
     .hero-title {
         position: relative;
-        margin: 0;
+        margin: 0.12rem 0 0 0;
         font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
         font-weight: 800;
         letter-spacing: -0.02em;
@@ -1301,18 +1287,20 @@ st.markdown(
         line-height: 1.1;
         color: var(--text-color);
     }
-    .hero-badge {
-        position: relative;
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-        font-size: 12px;
-        line-height: 1;
-        font-weight: 600;
-        color: var(--text-color);
-        padding: 0.45rem 0.65rem;
+    .hero-mode-wrap { position: relative; display: flex; justify-content: flex-end; }
+    .hero-mode-wrap [data-testid="stSegmentedControl"] { width: fit-content; margin-left: auto; }
+    .hero-mode-wrap [data-baseweb="button-group"] {
         border-radius: 999px;
-        background: rgba(59, 130, 246, 0.10);
+        background: rgba(255, 255, 255, 0.58);
+        padding: 0.12rem;
         border: 1px solid rgba(59, 130, 246, 0.18);
-        white-space: nowrap;
+    }
+    .hero-mode-wrap [data-baseweb="button-group"] button { border-radius: 999px !important; }
+    @media (prefers-color-scheme: dark) {
+        .hero-mode-wrap [data-baseweb="button-group"] {
+            background: rgba(30, 41, 59, 0.55);
+            border-color: rgba(96, 165, 250, 0.28);
+        }
     }
     .hero-sub {
         position: relative;
@@ -1353,27 +1341,20 @@ if page_mode_badge not in {"IR", "DR"}:
     page_mode_badge = "IR"
     st.session_state["page_mode"] = "IR"
 
-st.markdown(
-    f"""
-    <div class="hero">
-      <div class="hero-row">
-        <h1 class="hero-title">{APP_TITLE_DISPLAY_HTML}</h1>
-        <div class="hero-badge">{page_mode_badge}</div>
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-mode_cols = st.columns([7, 2])
-with mode_cols[1]:
-    st.radio(
-        "Page Mode",
-        options=["IR", "DR"],
-        horizontal=True,
-        key="page_mode",
-        label_visibility="collapsed",
-    )
+hero_box = st.container(border=True)
+with hero_box:
+    hero_cols = st.columns([6.8, 2.2], gap="small")
+    with hero_cols[0]:
+        st.markdown(f'<h1 class="hero-title">{APP_TITLE_DISPLAY_HTML}</h1>', unsafe_allow_html=True)
+    with hero_cols[1]:
+        st.markdown('<div class="hero-mode-wrap">', unsafe_allow_html=True)
+        st.segmented_control(
+            "Page Mode",
+            options=["IR", "DR"],
+            key="page_mode",
+            label_visibility="collapsed",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
 
 if st.session_state.get("page_mode") == "DR":
     _render_dr_page(st.session_state["cfg_dr"])
