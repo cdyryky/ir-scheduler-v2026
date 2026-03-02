@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any, Tuple
 
@@ -146,6 +147,55 @@ def _infer_gui_residents(residents: Any) -> Tuple[dict, bool]:
     return {"IR": gui_ir, "DR_counts": dr_counts}, ok
 
 
+def _normalize_gui_residents(value: Any) -> dict:
+    default = default_gui_residents()
+    if not isinstance(value, dict):
+        return default
+
+    ir_input = value.get("IR") if isinstance(value.get("IR"), dict) else {}
+    dr_input = value.get("DR_counts") if isinstance(value.get("DR_counts"), dict) else {}
+
+    normalized_ir: dict[str, list[str]] = {}
+    for track in IR_TRACKS:
+        raw_names = ir_input.get(track)
+        names: list[str] = []
+        if isinstance(raw_names, list):
+            for name in raw_names:
+                if isinstance(name, str) and name.strip():
+                    names.append(name.strip())
+                if len(names) == 2:
+                    break
+        if len(names) < 2:
+            names.extend(default["IR"][track][len(names):2])
+        normalized_ir[track] = names
+
+    normalized_dr: dict[str, int] = {}
+    for track in DR_TRACKS:
+        raw_count = dr_input.get(track, default["DR_counts"][track])
+        try:
+            normalized_dr[track] = max(0, int(raw_count))
+        except (TypeError, ValueError):
+            normalized_dr[track] = default["DR_counts"][track]
+
+    return {"IR": normalized_ir, "DR_counts": normalized_dr}
+
+
+def _expand_gui_residents(gui_residents: dict) -> list[dict[str, str]]:
+    residents: list[dict[str, str]] = []
+    ir_section = gui_residents.get("IR", {})
+    dr_counts = gui_residents.get("DR_counts", {})
+
+    for track in IR_TRACKS:
+        for name in ir_section.get(track, []):
+            residents.append({"id": name, "track": track})
+
+    for track in DR_TRACKS:
+        count = int(dr_counts.get(track, 0))
+        for idx in range(1, count + 1):
+            residents.append({"id": f"{track}-{idx}", "track": track})
+    return residents
+
+
 def _normalize_class_year_requirements(value: Any) -> dict:
     if not isinstance(value, dict):
         value = {}
@@ -161,10 +211,7 @@ def _normalize_class_year_requirements(value: Any) -> dict:
             raw = row.get(rot, defaults.get(rot, 0))
             if track in IR_TRACKS:
                 try:
-                    if rot == "KIR":
-                        normalized_value = max(0.0, float(int(round(float(raw)))))
-                    else:
-                        normalized_value = max(0.0, round(float(raw) * 2) / 2)
+                    normalized_value = max(0.0, round(float(raw) * 2) / 2)
                     normalized_row[rot] = (
                         int(normalized_value) if float(normalized_value).is_integer() else float(normalized_value)
                     )
@@ -187,12 +234,13 @@ def _requirements_from_class_year_requirements(class_year_requirements: dict) ->
 
 
 def normalize_config(cfg: Any) -> Tuple[dict, bool]:
-    cfg = migrate_config(cfg)
+    cfg = migrate_config(copy.deepcopy(cfg))
 
     input_gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else None
     input_gui_had_class_year_requirements = (
         isinstance(input_gui, dict) and "class_year_requirements" in input_gui
     )
+    input_gui_had_residents = isinstance(input_gui, dict) and "residents" in input_gui
 
     if "blocks" not in cfg and "num_blocks" not in cfg:
         cfg["blocks"] = 13
@@ -239,6 +287,11 @@ def normalize_config(cfg: Any) -> Tuple[dict, bool]:
         and isinstance(gui.get("class_year_requirements"), dict)
     ):
         cfg["requirements"] = _requirements_from_class_year_requirements(gui["class_year_requirements"])
+
+    if input_gui_had_residents:
+        gui["residents"] = _normalize_gui_residents(gui.get("residents"))
+        cfg["residents"] = _expand_gui_residents(gui["residents"])
+        return cfg, True
 
     if "residents" not in gui:
         gui_residents, ok = _infer_gui_residents(cfg.get("residents", []))
