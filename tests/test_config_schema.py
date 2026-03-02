@@ -67,6 +67,23 @@ class ConfigSchemaTests(unittest.TestCase):
         self.assertIn("requirements", cfg)
         self.assertEqual(cfg["requirements"]["DR3"]["48X-CT/US"], 2)
 
+    def test_prepare_config_prefers_gui_residents_when_present(self):
+        stale_residents = [
+            {"id": "DR3-1", "track": "DR3"},
+            {"id": "DR3-2", "track": "DR3"},
+        ]
+        gui_residents = {
+            "IR": {track: [f"{track}A", f"{track}B"] for track in ["IR1", "IR2", "IR3", "IR4", "IR5"]},
+            "DR_counts": {"DR1": 0, "DR2": 0, "DR3": 5},
+        }
+
+        cfg, ok = prepare_config({"residents": stale_residents, "gui": {"residents": gui_residents}})
+
+        self.assertTrue(ok)
+        dr3_residents = [entry for entry in cfg["residents"] if entry["track"] == "DR3"]
+        self.assertEqual(len(dr3_residents), 5)
+        self.assertEqual([entry["id"] for entry in dr3_residents], [f"DR3-{idx}" for idx in range(1, 6)])
+
 
 if __name__ == "__main__":
     unittest.main()
