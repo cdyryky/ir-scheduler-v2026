@@ -2593,9 +2593,12 @@ with tabs[7]:
             st.session_state.pop("pending_infer_ok", None)
         else:
             try:
-                loaded = yaml.safe_load(uploaded) or {}
+                uploaded_bytes = uploaded.getvalue()
+                loaded = yaml.safe_load(uploaded_bytes.decode("utf-8")) or {}
             except yaml.YAMLError as exc:
                 st.error(f"Failed to parse YAML: {exc}")
+            except UnicodeDecodeError as exc:
+                st.error(f"Failed to decode YAML as UTF-8: {exc}")
             else:
                 try:
                     cfg_loaded, ok = prepare_config(loaded)
