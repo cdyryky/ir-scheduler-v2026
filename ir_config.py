@@ -141,8 +141,9 @@ def _infer_gui_residents(residents: Any) -> Tuple[dict, bool]:
             dr_counts[track] += 1
 
     ok = all(len(ir_map[track]) == 2 for track in IR_TRACKS)
+    has_any_residents = bool(residents)
     gui_ir = {track: ir_map[track] if ok else list(DEFAULT_IR_NAMES[track]) for track in IR_TRACKS}
-    if not ok:
+    if not ok and not has_any_residents:
         dr_counts = dict(DEFAULT_DR_COUNTS)
     return {"IR": gui_ir, "DR_counts": dr_counts}, ok
 
