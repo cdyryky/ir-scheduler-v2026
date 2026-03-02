@@ -154,6 +154,9 @@ def _normalize_gui_residents(value: Any) -> dict:
 
     ir_input = value.get("IR") if isinstance(value.get("IR"), dict) else {}
     dr_input = value.get("DR_counts") if isinstance(value.get("DR_counts"), dict) else {}
+    # Backward/forgiving parsing: allow counts either under DR_counts,
+    # under lowercase dr_counts, or directly on gui.residents as DR1/DR2/DR3.
+    lower_dr_input = value.get("dr_counts") if isinstance(value.get("dr_counts"), dict) else {}
 
     normalized_ir: dict[str, list[str]] = {}
     for track in IR_TRACKS:
@@ -171,7 +174,10 @@ def _normalize_gui_residents(value: Any) -> dict:
 
     normalized_dr: dict[str, int] = {}
     for track in DR_TRACKS:
-        raw_count = dr_input.get(track, default["DR_counts"][track])
+        raw_count = dr_input.get(
+            track,
+            lower_dr_input.get(track, value.get(track, default["DR_counts"][track])),
+        )
         try:
             normalized_dr[track] = max(0, int(raw_count))
         except (TypeError, ValueError):
